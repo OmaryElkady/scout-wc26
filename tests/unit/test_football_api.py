@@ -132,7 +132,7 @@ def test_fixtures_returns_bronze_cache():
 
 def test_fixtures_calls_api_with_leagueid_param():
     client = _make_client()
-    api_payload = {"matches": [{"matchId": "10"}]}
+    api_payload = {"response": {"matches": [{"matchId": "10"}]}}
     with patch("src.utils.football_api.bq") as mock_bq, \
          patch("src.utils.football_api.requests.get", return_value=_mock_response(200, api_payload)) as mock_get:
         mock_bq.table_exists.return_value = False
@@ -299,9 +299,9 @@ def _squad(members: list[dict]) -> dict:
 def test_all_players_calls_fixtures_then_per_team():
     client = _make_client()
     fixtures_payload = {
-        "matches": [
+        "response": {"matches": [
             {"home": {"id": "10", "name": "Team A", "score": 1}, "away": {"id": "20", "name": "Team B", "score": 0}},
-        ]
+        ]}
     }
     p_a = {"playerId": "A", "excludeFromRanking": False}
     p_b = {"playerId": "B", "excludeFromRanking": False}
@@ -327,7 +327,7 @@ def test_all_players_calls_fixtures_then_per_team():
 
 def test_all_players_returns_empty_list_when_no_teams():
     client = _make_client()
-    fixtures_payload = {"matches": []}
+    fixtures_payload = {"response": {"matches": []}}
 
     with patch("src.utils.football_api.bq") as mock_bq, \
          patch("src.utils.football_api.requests.get", return_value=_mock_response(200, fixtures_payload)):
@@ -342,10 +342,10 @@ def test_all_players_returns_empty_list_when_no_teams():
 def test_all_players_flattens_results_across_teams():
     client = _make_client()
     fixtures_payload = {
-        "matches": [
+        "response": {"matches": [
             {"home": {"id": "1", "name": "Team A", "score": 1}, "away": {"id": "2", "name": "Team B", "score": 0}},
             {"home": {"id": "2", "name": "Team B", "score": 2}, "away": {"id": "3", "name": "Team C", "score": 1}},
-        ]
+        ]}
     }
     team_payloads = [
         _squad([{"playerId": str(i), "excludeFromRanking": False} for i in range(3)]),

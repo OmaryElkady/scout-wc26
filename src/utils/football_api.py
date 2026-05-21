@@ -107,7 +107,7 @@ class FootballAPIClient:
         data = self._get(
             "/football-get-all-matches-by-league", {"leagueid": _WORLD_CUP_LEAGUE_ID}
         )
-        return data.get("matches", [])
+        return data.get("response", {}).get("matches", [])
 
     def get_players_by_team(self, team_id: int) -> list[dict]:
         if self._team_squad_cached(team_id):
