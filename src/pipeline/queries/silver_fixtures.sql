@@ -5,7 +5,7 @@ SELECT
   home_team_name,
   away_team_id,
   away_team_name,
-  CAST(match_date AS DATE) AS match_date,
+  DATE(TIMESTAMP(match_date)) AS match_date,
   status,
   home_score,
   away_score,
