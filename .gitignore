@@ -1,0 +1,15 @@
+
+
+
+
+.env
+
+
+
+# Claude Code — local tooling, not project source
+.claude/
+architecture.md
+gotchas.md
+tech-stack.md
+HOW-TO-USE.md
+CLAUDE.md
