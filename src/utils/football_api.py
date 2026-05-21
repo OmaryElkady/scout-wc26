@@ -56,7 +56,7 @@ class FootballAPIClient:
         # Safe: team_id is int-coerced.
         rows = bq.run_query(
             f"SELECT 1 FROM `{config.table('bronze_team_squads')}` "
-            f"WHERE team_id = {int(team_id)} LIMIT 1"
+            f"WHERE team_id = '{int(team_id)}' LIMIT 1"
         )
         return len(rows) > 0
 
@@ -67,7 +67,7 @@ class FootballAPIClient:
         # Safe: player_id is int-coerced.
         rows = bq.run_query(
             f"SELECT 1 FROM `{config.table('bronze_player_details')}` "
-            f"WHERE player_id = {int(player_id)} LIMIT 1"
+            f"WHERE player_id = '{int(player_id)}' LIMIT 1"
         )
         return len(rows) > 0
 
