@@ -4,6 +4,7 @@
 
 .env
 venv/
+requirements-lock.txt
 __pycache__/
 *.pyc
 *.pyo
