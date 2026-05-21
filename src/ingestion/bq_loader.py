@@ -39,3 +39,12 @@ def write_bronze_standings(rows: list[dict]) -> None:
     stamped = _stamp(rows)
     logger.info("Writing %d rows to bronze_standings", len(stamped))
     bq.insert_rows("bronze_standings", stamped)
+
+
+def write_bronze_team_squads(team_id: int, rows: list[dict]) -> None:
+    if not rows:
+        logger.warning("write_bronze_team_squads called with no rows for team %d, skipping", team_id)
+        return
+    stamped = [{**row, "team_id": int(team_id)} for row in _stamp(rows)]
+    logger.info("Writing %d rows to bronze_team_squads for team %d", len(stamped), team_id)
+    bq.insert_rows("bronze_team_squads", stamped)
