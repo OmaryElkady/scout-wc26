@@ -9,8 +9,13 @@ logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://free-api-live-football-data.p.rapidapi.com"
 
-# Confirmed via live API search (/football-leagues-search?search=World%20Cup).
-_WORLD_CUP_LEAGUE_ID = 77
+# UEFA World Cup Qualification — has real national team data including France,
+# Germany, England, Spain, Portugal. Swap to 77 when WC 2026 fixtures go live ~June 11.
+_WORLD_CUP_LEAGUE_ID = 10195
+
+# 2022 data used for development. Swap to 2026 when provider populates WC 2026
+# fixtures (~June 11 2026).
+_SEASON = 2022
 
 
 class FootballAPIClient:
@@ -71,10 +76,13 @@ class FootballAPIClient:
     # ------------------------------------------------------------------
 
     def get_world_cup_standings(self) -> tuple[list[dict], list[int]]:
-        """Fetch standings for league 77 and extract team IDs for downstream calls.
+        """Fetch standings for the configured league.
 
-        Returns (standings_rows, team_ids).  Always unpack both — callers need
-        team_ids to drive get_all_world_cup_players().
+        WARNING: standings endpoint fails for international leagues. This method
+        exists for future use when WC 2026 group stage data is available. Do not
+        call this in the ingestion flow.
+
+        Returns (standings_rows, team_ids).  Always unpack both.
         """
         if self._table_has_any_data("bronze_standings"):
             logger.info("Standings cache hit, reading from Bronze")
@@ -111,8 +119,15 @@ class FootballAPIClient:
 
         logger.info("Fetching players for team %d from API", team_id)
         data = self._get("/football-get-list-player", {"teamid": int(team_id)})
-        # players key: verify against live API response if empty.
-        return data.get("players", [])
+        # Live response: data["response"]["list"]["squad"] is a list of position groups,
+        # each with a "members" list. Coaches have excludeFromRanking=True — skip them.
+        squad_groups = data.get("response", {}).get("list", {}).get("squad", [])
+        return [
+            member
+            for group in squad_groups
+            for member in group.get("members", [])
+            if not member.get("excludeFromRanking")
+        ]
 
     def get_player_detail(self, player_id: int) -> dict:
         if self._player_detail_cached(player_id):
@@ -131,15 +146,23 @@ class FootballAPIClient:
     def get_all_world_cup_players(self) -> list[dict]:
         """Fetch every player across all World Cup teams.
 
-        Calls get_world_cup_standings() to get team IDs, then
-        get_players_by_team() per team.  This is the method bq_loader calls.
+        Extracts unique team IDs from fixture home/away fields (standings endpoint
+        fails for international leagues), then calls get_players_by_team() per team.
+        This is the method bq_loader calls.
         """
         if self._table_has_any_data("bronze_players"):
             logger.info("All-players cache hit, reading from Bronze")
             return bq.run_query(f"SELECT * FROM `{config.table('bronze_players')}`")
 
-        _, team_ids = self.get_world_cup_standings()
-        logger.info("Fetching players for %d teams", len(team_ids))
+        fixtures = self.get_world_cup_fixtures()
+        seen: set[int] = set()
+        for match in fixtures:
+            for side in ("home", "away"):
+                side_data = match.get(side, {})
+                if isinstance(side_data, dict) and side_data.get("id"):
+                    seen.add(int(side_data["id"]))
+        team_ids = list(seen)
+        logger.info("Fetching players for %d teams extracted from fixtures", len(team_ids))
         all_players: list[dict] = []
         for team_id in team_ids:
             all_players.extend(self.get_players_by_team(team_id))

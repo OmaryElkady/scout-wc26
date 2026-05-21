@@ -177,7 +177,8 @@ def test_players_by_team_returns_bronze_cache():
 
 def test_players_by_team_calls_api_with_teamid_param():
     client = _make_client()
-    api_payload = {"players": [{"playerId": "1"}]}
+    player = {"playerId": "1", "excludeFromRanking": False}
+    api_payload = {"response": {"list": {"squad": [{"title": "attackers", "members": [player]}]}}}
     with patch("src.utils.football_api.bq") as mock_bq, \
          patch("src.utils.football_api.requests.get", return_value=_mock_response(200, api_payload)) as mock_get:
         mock_bq.table_exists.return_value = False
@@ -188,7 +189,7 @@ def test_players_by_team_calls_api_with_teamid_param():
     assert kwargs["params"]["teamid"] == 42
     assert "teamId" not in kwargs["params"]
     assert "team_id" not in kwargs["params"]
-    assert result == [{"playerId": "1"}]
+    assert result == [player]
 
 
 def test_players_by_team_returns_empty_list_on_missing_players_key():
@@ -291,14 +292,25 @@ def test_all_players_returns_bronze_cache():
     mock_requests.assert_not_called()
 
 
-def test_all_players_calls_standings_then_per_team():
+def _squad(members: list[dict]) -> dict:
+    return {"response": {"list": {"squad": [{"title": "attackers", "members": members}]}}}
+
+
+def test_all_players_calls_fixtures_then_per_team():
     client = _make_client()
-    standings_payload = {"standings": [{"teamId": 10}, {"teamId": 20}]}
-    team10_payload = {"players": [{"playerId": "A"}]}
-    team20_payload = {"players": [{"playerId": "B"}, {"playerId": "C"}]}
+    fixtures_payload = {
+        "matches": [
+            {"home": {"id": "10", "name": "Team A", "score": 1}, "away": {"id": "20", "name": "Team B", "score": 0}},
+        ]
+    }
+    p_a = {"playerId": "A", "excludeFromRanking": False}
+    p_b = {"playerId": "B", "excludeFromRanking": False}
+    p_c = {"playerId": "C", "excludeFromRanking": False}
+    team10_payload = _squad([p_a])
+    team20_payload = _squad([p_b, p_c])
 
     responses = [
-        _mock_response(200, standings_payload),
+        _mock_response(200, fixtures_payload),
         _mock_response(200, team10_payload),
         _mock_response(200, team20_payload),
     ]
@@ -310,15 +322,15 @@ def test_all_players_calls_standings_then_per_team():
 
         result = client.get_all_world_cup_players()
 
-    assert result == [{"playerId": "A"}, {"playerId": "B"}, {"playerId": "C"}]
+    assert sorted(result, key=lambda p: p["playerId"]) == [p_a, p_b, p_c]
 
 
 def test_all_players_returns_empty_list_when_no_teams():
     client = _make_client()
-    standings_payload = {"standings": []}
+    fixtures_payload = {"matches": []}
 
     with patch("src.utils.football_api.bq") as mock_bq, \
-         patch("src.utils.football_api.requests.get", return_value=_mock_response(200, standings_payload)):
+         patch("src.utils.football_api.requests.get", return_value=_mock_response(200, fixtures_payload)):
         mock_bq.table_exists.return_value = False
         mock_bq.run_query.return_value = []
 
@@ -329,14 +341,19 @@ def test_all_players_returns_empty_list_when_no_teams():
 
 def test_all_players_flattens_results_across_teams():
     client = _make_client()
-    standings_payload = {"standings": [{"teamId": 1}, {"teamId": 2}, {"teamId": 3}]}
+    fixtures_payload = {
+        "matches": [
+            {"home": {"id": "1", "name": "Team A", "score": 1}, "away": {"id": "2", "name": "Team B", "score": 0}},
+            {"home": {"id": "2", "name": "Team B", "score": 2}, "away": {"id": "3", "name": "Team C", "score": 1}},
+        ]
+    }
     team_payloads = [
-        {"players": [{"playerId": str(i)} for i in range(3)]},
-        {"players": [{"playerId": str(i)} for i in range(3, 5)]},
-        {"players": []},
+        _squad([{"playerId": str(i), "excludeFromRanking": False} for i in range(3)]),
+        _squad([{"playerId": str(i), "excludeFromRanking": False} for i in range(3, 5)]),
+        _squad([]),
     ]
 
-    responses = [_mock_response(200, standings_payload)] + [
+    responses = [_mock_response(200, fixtures_payload)] + [
         _mock_response(200, p) for p in team_payloads
     ]
 
