@@ -1,3 +1,4 @@
+import json
 import logging
 
 import requests
@@ -100,8 +101,9 @@ class FootballAPIClient:
 
     def get_world_cup_fixtures(self) -> list[dict]:
         if self._table_has_any_data("bronze_fixtures"):
-            logger.info("Fixtures cache hit, reading from Bronze")
-            return bq.run_query(f"SELECT * FROM `{config.table('bronze_fixtures')}`")
+            logger.info("Fixtures cache hit, reading raw_json from Bronze")
+            rows = bq.run_query(f"SELECT raw_json FROM `{config.table('bronze_fixtures')}`")
+            return [json.loads(r["raw_json"]) for r in rows]
 
         logger.info("Fetching World Cup fixtures from API (leagueid=%d)", _WORLD_CUP_LEAGUE_ID)
         data = self._get(
@@ -111,11 +113,12 @@ class FootballAPIClient:
 
     def get_players_by_team(self, team_id: int) -> list[dict]:
         if self._team_squad_cached(team_id):
-            logger.info("Players cache hit for team %d, reading from Bronze", team_id)
-            return bq.run_query(
-                f"SELECT * FROM `{config.table('bronze_team_squads')}` "
-                f"WHERE team_id = {int(team_id)}"
+            logger.info("Players cache hit for team %d, reading raw_json from Bronze", team_id)
+            rows = bq.run_query(
+                f"SELECT raw_json FROM `{config.table('bronze_team_squads')}` "
+                f"WHERE team_id = '{int(team_id)}'"
             )
+            return [json.loads(r["raw_json"]) for r in rows]
 
         logger.info("Fetching players for team %d from API", team_id)
         data = self._get("/football-get-list-player", {"teamid": int(team_id)})

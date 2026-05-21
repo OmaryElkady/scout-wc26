@@ -118,15 +118,15 @@ def test_standings_skips_rows_missing_teamId():
 
 def test_fixtures_returns_bronze_cache():
     client = _make_client()
-    cached = [{"matchId": "55"}]
+    original = {"matchId": "55"}
     with patch("src.utils.football_api.bq") as mock_bq, \
          patch("src.utils.football_api.requests.get") as mock_requests:
         mock_bq.table_exists.return_value = True
-        mock_bq.run_query.return_value = cached
+        mock_bq.run_query.return_value = [{"raw_json": '{"matchId": "55"}'}]
 
         result = client.get_world_cup_fixtures()
 
-    assert result == cached
+    assert result == [original]
     mock_requests.assert_not_called()
 
 
@@ -163,15 +163,15 @@ def test_fixtures_returns_empty_list_on_missing_matches_key():
 
 def test_players_by_team_returns_bronze_cache():
     client = _make_client()
-    cached = [{"playerId": "77", "team_id": 5}]
+    original = {"playerId": "77", "team_id": 5}
     with patch("src.utils.football_api.bq") as mock_bq, \
          patch("src.utils.football_api.requests.get") as mock_requests:
         mock_bq.table_exists.return_value = True
-        mock_bq.run_query.return_value = cached
+        mock_bq.run_query.return_value = [{"raw_json": '{"playerId": "77", "team_id": 5}'}]
 
         result = client.get_players_by_team(5)
 
-    assert result == cached
+    assert result == [original]
     mock_requests.assert_not_called()
 
 
