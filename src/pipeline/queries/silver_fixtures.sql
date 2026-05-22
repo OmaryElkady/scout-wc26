@@ -13,7 +13,7 @@ SELECT
   season,
   source,
   ingested_at,
-  LOWER(status) = 'finished' AS is_completed
+  LOWER(status) IN ('ft', 'aet', 'pen', 'finished') AS is_completed
 FROM (
   SELECT *,
     ROW_NUMBER() OVER (PARTITION BY fixture_id ORDER BY ingested_at DESC) AS rn
