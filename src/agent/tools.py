@@ -8,6 +8,34 @@ logger = logging.getLogger(__name__)
 
 _MAX_RESULTS = 20
 
+# Silver transform normalises positions to these four codes.
+_POSITION_MAP: dict[str, str] = {
+    "goalkeeper": "GK",
+    "goalkeepers": "GK",
+    "gk": "GK",
+    "defender": "DEF",
+    "defenders": "DEF",
+    "def": "DEF",
+    "back": "DEF",
+    "midfielder": "MID",
+    "midfielders": "MID",
+    "mid": "MID",
+    "midfield": "MID",
+    "forward": "FWD",
+    "forwards": "FWD",
+    "fwd": "FWD",
+    "attacker": "FWD",
+    "attackers": "FWD",
+    "striker": "FWD",
+    "strikers": "FWD",
+    "winger": "FWD",
+}
+
+
+def _normalize_position(pos: str) -> str:
+    """Translate a natural-language position name to the stored abbreviation."""
+    return _POSITION_MAP.get(pos.strip().lower(), pos.upper())
+
 
 def _esc(value: str) -> str:
     """Escape single quotes for BigQuery string literals."""
@@ -30,14 +58,16 @@ def query_players(
     Parameters
     ----------
     position : str, optional
-        Player position to filter by. Accepted values: 'Goalkeeper', 'Defender',
-        'Midfielder', 'Forward'. Comparison is case-insensitive.
+        Player position to filter by. Stored values are 'GK' (goalkeeper),
+        'DEF' (defender), 'MID' (midfielder), 'FWD' (forward). Common words
+        like 'Goalkeeper', 'Midfielder', 'Forward' are also accepted and will
+        be normalised automatically.
     nationality : str, optional
         Nationality or country name substring (partial match, case-insensitive).
-        E.g. 'French', 'Brazil', 'England'.
+        E.g. 'Germany', 'Luxembourg', 'Northern Ireland'.
     team_name : str, optional
-        Club or national team name substring (partial match, case-insensitive).
-        E.g. 'France', 'Real Madrid', 'Manchester'.
+        National team name substring (partial match, case-insensitive).
+        E.g. 'Germany', 'Slovakia', 'Luxembourg'.
     min_age : int, optional
         Minimum player age (inclusive).
     max_age : int, optional
@@ -54,7 +84,7 @@ def query_players(
     conditions = []
 
     if position:
-        conditions.append("LOWER(position) = LOWER('" + _esc(position) + "')")
+        conditions.append("position = '" + _esc(_normalize_position(position)) + "'")
     if nationality:
         conditions.append("LOWER(nationality) LIKE '%" + _esc(nationality.lower()) + "%'")
     if team_name:
@@ -187,8 +217,9 @@ def get_top_players_by_position(
     Parameters
     ----------
     position : str
-        Player position to filter. Accepted values: 'Goalkeeper', 'Defender',
-        'Midfielder', 'Forward'. Comparison is case-insensitive.
+        Player position to filter. Stored values are 'GK', 'DEF', 'MID', 'FWD'.
+        Common words like 'Goalkeeper', 'Midfielder', 'Forward' are also accepted
+        and will be normalised automatically.
     limit : int, optional
         Maximum number of players to return. Defaults to 10. Capped at 100.
 
@@ -205,9 +236,9 @@ def get_top_players_by_position(
     sql = (
         "SELECT * FROM `"
         + table
-        + "` WHERE LOWER(position) = LOWER('"
-        + _esc(position)
-        + "') ORDER BY age ASC LIMIT "
+        + "` WHERE position = '"
+        + _esc(_normalize_position(position))
+        + "' ORDER BY age ASC LIMIT "
         + safe_limit
     )
 
