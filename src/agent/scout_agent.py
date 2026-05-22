@@ -11,7 +11,7 @@ from src.utils.config import config
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "gemini-2.0-flash"
+_MODEL = "gemini-2.5-flash"
 _MAX_TOOL_ROUNDS = 5
 
 _SYSTEM_INSTRUCTION = (
