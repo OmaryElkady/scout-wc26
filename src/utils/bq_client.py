@@ -24,17 +24,21 @@ class BigQueryClient:
         rows = self._conn().query(sql).result()
         return [dict(row) for row in rows]
 
-    def insert_rows(self, table_name: str, rows: list[dict[str, Any]]) -> None:
+    def insert_rows(self, table_name: str, rows: list[dict[str, Any]], chunk_size: int = 500) -> None:
         if not rows:
             return
         table_id = config.table(table_name)
-        logger.info("Inserting %d rows into %s", len(rows), table_id)
+        logger.info("Inserting %d rows into %s (chunk_size=%d)", len(rows), table_id, chunk_size)
         # insert_rows_json does NOT raise on partial failure — always check.
-        errors = self._conn().insert_rows_json(table_id, rows)
-        if errors:
-            raise RuntimeError(
-                f"BigQuery insert_rows_json failed for {table_id}: {errors}"
-            )
+        # Chunking avoids payload-size and timeout limits on large batches.
+        for i in range(0, len(rows), chunk_size):
+            chunk = rows[i : i + chunk_size]
+            errors = self._conn().insert_rows_json(table_id, chunk)
+            if errors:
+                raise RuntimeError(
+                    f"BigQuery insert_rows_json failed for {table_id} "
+                    f"(chunk {i}–{i + len(chunk)}): {errors}"
+                )
 
     def table_exists(self, table_name: str) -> bool:
         table_id = config.table(table_name)
