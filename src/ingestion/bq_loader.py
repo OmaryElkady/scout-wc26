@@ -55,6 +55,25 @@ def _map_squad_member(raw: dict, team_id: int, team_name: str, ts: str) -> dict:
     }
 
 
+def _map_squad_member_to_bronze_players(raw: dict, team_id: int, team_name: str, ts: str) -> dict:
+    """Map a squad member to the bronze_players schema (used by silver_players.sql)."""
+    age_raw = raw.get("age")
+    shirt_raw = raw.get("shirtNumber")
+    return {
+        "player_id": str(raw.get("id", "")),
+        "team_id": str(team_id),
+        "team_name": team_name,
+        "name": raw.get("name", ""),
+        "position": raw.get("positionIdsDesc", ""),
+        "nationality": team_name,  # squad members represent the national team
+        "age": int(age_raw) if age_raw is not None else None,
+        "jersey_number": int(shirt_raw) if shirt_raw is not None else None,
+        "raw_json": json.dumps(raw),
+        "ingested_at": ts,
+        "source": _SOURCE,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Public write functions
 # ---------------------------------------------------------------------------
@@ -94,6 +113,9 @@ def write_bronze_team_squads(team_id: int, rows: list[dict], team_name: str = ""
         logger.warning("write_bronze_team_squads called with no rows for team %d, skipping", team_id)
         return
     ts = _now()
-    mapped = [_map_squad_member(r, team_id, team_name, ts) for r in rows]
-    logger.info("Writing %d rows to bronze_team_squads for team %d", len(mapped), team_id)
-    bq.insert_rows("bronze_team_squads", mapped)
+    compact = [_map_squad_member(r, team_id, team_name, ts) for r in rows]
+    logger.info("Writing %d rows to bronze_team_squads for team %d", len(compact), team_id)
+    bq.insert_rows("bronze_team_squads", compact)
+    full = [_map_squad_member_to_bronze_players(r, team_id, team_name, ts) for r in rows]
+    logger.info("Writing %d rows to bronze_players for team %d", len(full), team_id)
+    bq.insert_rows("bronze_players", full)
