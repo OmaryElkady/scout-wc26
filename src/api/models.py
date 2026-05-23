@@ -7,6 +7,10 @@ class QueryRequest(BaseModel):
     question: str
 
 
+class ChartRequest(BaseModel):
+    request: str
+
+
 class QueryResponse(BaseModel):
     answer: str
     question: str
