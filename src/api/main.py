@@ -166,13 +166,21 @@ def report_pdf(player_name: str) -> Response:
     team = agent_tools.query_team_summary(team_name=team_name) if team_name else {}
     roster = agent_tools.get_team_roster(team_name=team_name) if team_name else []
 
+    _wins = team.get("wins", 0) if team else 0
+    _draws = team.get("draws", 0) if team else 0
+    _losses = team.get("losses", 0) if team else 0
+    _points = team.get("points", 0) if team else 0
     scouting_para = scout_agent.run_query(
-        f"Write a concise 2–3 sentence professional scouting assessment for "
-        f"{player.get('name', player_name)} "
-        f"({player.get('position', '')}, {player.get('nationality', '')}, "
-        f"age {player.get('age', '')}). "
-        f"Focus on their key strengths and value as a World Cup player. "
-        f"Reply with the assessment paragraph only, no extra commentary."
+        f"You are a professional football scout writing a scouting report. "
+        f"Write a 3-4 sentence scouting assessment for {player.get('name', player_name)}, "
+        f"aged {player.get('age', 'unknown')}, who plays {player.get('position', 'unknown')} "
+        f"for {player.get('team_name', 'unknown')} (nationality: {player.get('nationality', 'unknown')}). "
+        f"Their team has {_wins} wins, {_draws} draws, {_losses} losses and {_points} points. "
+        f"\n\nWrite specifically about: their likely playing style for their position and age, "
+        f"their value to the national team given the team's record, and one specific recommendation "
+        f"(e.g. worth monitoring, strong prospect, established starter). "
+        f"\n\nWrite in the style of a professional scout report. Be specific and direct. "
+        f"Do not say you cannot assess players or that you lack domain expertise — just write the assessment."
     )
 
     buffer = BytesIO()
