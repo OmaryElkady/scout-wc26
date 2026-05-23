@@ -67,6 +67,12 @@ def teams() -> TeamListResponse:
     return TeamListResponse(teams=rows)
 
 
+@app.post("/refresh")
+def refresh() -> dict:
+    logger.info("POST /refresh")
+    return agent_tools.refresh_scouting_data()
+
+
 @app.get("/players", response_model=PlayerListResponse)
 def players(
     position: Optional[str] = None,
