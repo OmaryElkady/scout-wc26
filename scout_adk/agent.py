@@ -1,10 +1,19 @@
 from google.adk.agents import Agent
 
 from src.agent import tools as agent_tools
+from src.utils.config import config
+
+# ADK routes to Vertex AI only when the model starts with "projects/".
+# Using just "gemini-2.5-flash" makes ADK call the Gemini API and demand
+# GOOGLE_API_KEY, which we don't use — we authenticate via ADC + Vertex AI.
+_VERTEX_MODEL = (
+    f"projects/{config.PROJECT_ID}/locations/{config.REGION}"
+    "/publishers/google/models/gemini-2.5-flash"
+)
 
 root_agent = Agent(
     name="scout",
-    model="gemini-2.5-flash",
+    model=_VERTEX_MODEL,
     description=(
         "AI-powered World Cup scouting agent. Answers natural language questions "
         "about players, teams, and match data for the 2026 FIFA World Cup. "

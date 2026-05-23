@@ -55,19 +55,22 @@ def query(request: QueryRequest) -> QueryResponse:
 async def adk_query(request: QueryRequest) -> QueryResponse:
     """Run the question through the Google ADK agent (Agent Builder integration)."""
     from google.adk.runners import InMemoryRunner
+    from google.genai import types
     from scout_adk.agent import root_agent
 
     logger.info("POST /adk/query: question=%r", request.question)
 
     _APP = "scout"
-    runner = InMemoryRunner(agent=root_agent)
+    runner = InMemoryRunner(agent=root_agent, app_name=_APP)
     session = await runner.session_service.create_session(app_name=_APP, user_id="api")
 
     final_text = ""
     async for event in runner.run_async(
         user_id="api",
         session_id=session.id,
-        new_message={"role": "user", "parts": [{"text": request.question}]},
+        new_message=types.Content(
+            role="user", parts=[types.Part(text=request.question)]
+        ),
     ):
         if event.is_final_response() and event.content and event.content.parts:
             final_text = "".join(p.text or "" for p in event.content.parts)
