@@ -52,7 +52,9 @@ def query_players(
     """
     Search the gold_player_stats table for players matching optional filters.
 
-    All parameters are optional; omit any to return players without that filter (up to 20).
+    When called with no arguments, returns a sample of up to 20 players spread
+    across all teams (ordered by team name then player name). When filters are
+    provided, returns only players matching all supplied criteria (up to 20).
     Use this tool when the user asks about players by position, country, team, or age range.
 
     Parameters
@@ -95,7 +97,8 @@ def query_players(
         conditions.append("age <= " + str(int(max_age)))
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    sql = "SELECT * FROM `" + table + "` " + where + " LIMIT " + str(_MAX_RESULTS)
+    order_by = "" if conditions else " ORDER BY team_name, name"
+    sql = "SELECT * FROM `" + table + "` " + where + order_by + " LIMIT " + str(_MAX_RESULTS)
 
     logger.info(
         "query_players: position=%s nationality=%s team=%s age=[%s,%s]",
@@ -113,9 +116,10 @@ def query_players(
 def query_team_summary(
     team_name: Optional[str] = None,
     team_id: Optional[str] = None,
-) -> dict[str, Any]:
+) -> Any:
     """
-    Look up a team's match record from the gold_team_summary table.
+    Get team performance summary. Call with no arguments to get all teams ranked
+    by points. Call with team_name to get a specific team.
 
     Returns aggregated statistics: wins, draws, losses, goals for/against,
     goal difference, and total points (3 per win, 1 per draw), computed only
@@ -133,10 +137,12 @@ def query_team_summary(
 
     Returns
     -------
-    dict
-        Team record with keys: team_id, team_name, matches_played, wins, draws,
-        losses, goals_for, goals_against, goal_difference, points.
-        Returns an empty dict if the team is not found.
+    list of dict (no arguments)
+        All teams ordered by points descending (up to 20). Each dict contains:
+        team_id, team_name, matches_played, wins, draws, losses, goals_for,
+        goals_against, goal_difference, points.
+    dict (team_name or team_id supplied)
+        Single team record. Returns an empty dict if the team is not found.
     """
     table = config.table("gold_team_summary")
     conditions = []
@@ -146,13 +152,19 @@ def query_team_summary(
     if team_name:
         conditions.append("LOWER(team_name) LIKE '%" + _esc(team_name.lower()) + "%'")
 
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    sql = "SELECT * FROM `" + table + "` " + where + " LIMIT 1"
-
     logger.info("query_team_summary: team_name=%s team_id=%s", team_name, team_id)
+
+    if conditions:
+        where = "WHERE " + " AND ".join(conditions)
+        sql = "SELECT * FROM `" + table + "` " + where + " LIMIT 1"
+        rows = bq.run_query(sql)
+        logger.info("query_team_summary: found=%s", bool(rows))
+        return rows[0] if rows else {}
+
+    sql = "SELECT * FROM `" + table + "` ORDER BY points DESC LIMIT " + str(_MAX_RESULTS)
     rows = bq.run_query(sql)
-    logger.info("query_team_summary: found=%s", bool(rows))
-    return rows[0] if rows else {}
+    logger.info("query_team_summary: returned %d teams", len(rows))
+    return rows
 
 
 def get_player_detail(
@@ -246,6 +258,95 @@ def get_top_players_by_position(
     rows = bq.run_query(sql)
     logger.info("get_top_players_by_position: returned %d rows", len(rows))
     return rows
+
+
+def get_team_roster(team_name: str) -> list[dict[str, Any]]:
+    """
+    Get the full roster of players for a specific team. Returns all players with
+    their position, age, and nationality. Use this when asked about a team's squad,
+    lineup, or players.
+
+    Parameters
+    ----------
+    team_name : str
+        Team name to look up (partial match, case-insensitive). E.g. 'Germany', 'France'.
+
+    Returns
+    -------
+    list of dict
+        All players for the team ordered by position then name. Each dict contains:
+        player_id, name, position, age, nationality, jersey_number.
+        Returns an empty list if the team is not found.
+    """
+    table = config.table("gold_player_stats")
+    sql = (
+        "SELECT player_id, name, position, age, nationality, jersey_number "
+        "FROM `" + table + "` "
+        "WHERE LOWER(team_name) LIKE '%" + _esc(team_name.lower()) + "%' "
+        "ORDER BY position, name"
+    )
+
+    logger.info("get_team_roster: team_name=%s", team_name)
+    rows = bq.run_query(sql)
+    logger.info("get_team_roster: returned %d players", len(rows))
+    return rows
+
+
+def get_league_overview() -> dict[str, Any]:
+    """
+    Get a full overview of the dataset: total players, total teams, list of all
+    team names, position breakdown, and nationality diversity. Use this when asked
+    about the league, competition, dataset, or what data is available.
+
+    Returns
+    -------
+    dict
+        total_players: int — number of players in the dataset
+        total_teams: int — number of distinct national teams
+        teams: list of str — all team names sorted alphabetically
+        position_breakdown: dict — player counts keyed by position code (GK/DEF/MID/FWD)
+        top_nationalities: list of dict — top 10 nationalities by player count
+        competition: str — competition name and league ID
+    """
+    table = config.table("gold_player_stats")
+
+    counts_sql = (
+        "SELECT COUNT(*) as total_players, COUNT(DISTINCT team_name) as total_teams "
+        "FROM `" + table + "`"
+    )
+    counts = bq.run_query(counts_sql)
+    total_players = counts[0]["total_players"] if counts else 0
+    total_teams = counts[0]["total_teams"] if counts else 0
+
+    teams_sql = "SELECT DISTINCT team_name FROM `" + table + "` ORDER BY team_name"
+    teams = [r["team_name"] for r in bq.run_query(teams_sql)]
+
+    pos_sql = (
+        "SELECT position, COUNT(*) as cnt FROM `" + table + "` "
+        "GROUP BY position ORDER BY position"
+    )
+    position_breakdown = {r["position"]: r["cnt"] for r in bq.run_query(pos_sql)}
+
+    nat_sql = (
+        "SELECT nationality, COUNT(*) as cnt FROM `" + table + "` "
+        "GROUP BY nationality ORDER BY cnt DESC LIMIT 10"
+    )
+    top_nationalities = [
+        {"nationality": r["nationality"], "count": r["cnt"]}
+        for r in bq.run_query(nat_sql)
+    ]
+
+    logger.info(
+        "get_league_overview: %d players across %d teams", total_players, total_teams
+    )
+    return {
+        "total_players": total_players,
+        "total_teams": total_teams,
+        "teams": teams,
+        "position_breakdown": position_breakdown,
+        "top_nationalities": top_nationalities,
+        "competition": "UEFA World Cup Qualification (League 10195)",
+    }
 
 
 def refresh_scouting_data() -> dict[str, Any]:
