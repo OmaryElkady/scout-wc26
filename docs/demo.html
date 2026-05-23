@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scout WC26 — AI Football Scouting</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d1117;
+      --surface:   #161b22;
+      --border:    #30363d;
+      --primary:   #58a6ff;
+      --primary-h: #79b8ff;
+      --green:     #3fb950;
+      --yellow:    #d29922;
+      --red:       #f85149;
+      --text:      #c9d1d9;
+      --muted:     #8b949e;
+      --radius:    10px;
+      --font:      -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: linear-gradient(135deg, #161b22 0%, #0d1117 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 20px 40px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .logo {
+      width: 42px; height: 42px;
+      background: linear-gradient(135deg, var(--primary) 0%, #1f6feb 100%);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px;
+    }
+    .header-text h1 { font-size: 22px; font-weight: 700; color: #fff; letter-spacing: -0.3px; }
+    .header-text p  { font-size: 13px; color: var(--muted); margin-top: 1px; }
+    .badge {
+      margin-left: auto;
+      background: rgba(88,166,255,.12);
+      border: 1px solid rgba(88,166,255,.3);
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 20px;
+      letter-spacing: 0.3px;
+    }
+
+    /* ── Layout ── */
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 36px 24px 60px;
+      display: grid;
+      gap: 28px;
+    }
+
+    /* ── Section cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .card-header {
+      padding: 18px 24px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .card-header .icon {
+      width: 32px; height: 32px;
+      background: rgba(88,166,255,.1);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px;
+    }
+    .card-header h2 { font-size: 16px; font-weight: 600; color: #fff; }
+    .card-header p  { font-size: 13px; color: var(--muted); margin-top: 1px; }
+    .card-body { padding: 24px; }
+
+    /* ── Form elements ── */
+    .input-row { display: flex; gap: 10px; }
+    input[type="text"] {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      padding: 10px 14px;
+      outline: none;
+      transition: border-color .15s;
+    }
+    input[type="text"]:focus { border-color: var(--primary); }
+    input[type="text"]::placeholder { color: var(--muted); }
+
+    button {
+      background: var(--primary);
+      border: none;
+      border-radius: 8px;
+      color: #0d1117;
+      cursor: pointer;
+      font-family: var(--font);
+      font-size: 14px;
+      font-weight: 600;
+      padding: 10px 20px;
+      transition: background .15s, transform .1s;
+      white-space: nowrap;
+    }
+    button:hover  { background: var(--primary-h); }
+    button:active { transform: scale(.97); }
+    button:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+
+    /* ── Answer / output boxes ── */
+    .answer-box {
+      margin-top: 18px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px 18px;
+      font-size: 14px;
+      line-height: 1.7;
+      min-height: 60px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      display: none;
+    }
+    .answer-box.visible { display: block; }
+    .answer-box.error   { border-color: var(--red); color: var(--red); }
+
+    /* ── Spinner ── */
+    .spinner {
+      display: none;
+      width: 18px; height: 18px;
+      border: 2px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      margin: 16px auto 0;
+    }
+    .spinner.visible { display: block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Report card ── */
+    .report-card {
+      display: none;
+      margin-top: 18px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .report-card.visible { display: block; }
+    .report-hero {
+      padding: 20px 22px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+    }
+    .player-avatar {
+      width: 52px; height: 52px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--primary) 0%, #1f6feb 100%);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px;
+      flex-shrink: 0;
+    }
+    .player-info h3    { font-size: 18px; font-weight: 700; color: #fff; }
+    .player-meta       { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .meta-chip {
+      background: rgba(48,54,61,.8);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      font-size: 12px;
+      padding: 3px 10px;
+      color: var(--text);
+    }
+    .rec-chip {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 3px 12px;
+      border-radius: 20px;
+    }
+    .rec-priority { background: rgba(63,185,80,.15); color: var(--green);  border: 1px solid rgba(63,185,80,.3);  }
+    .rec-monitor  { background: rgba(210,153,34,.15); color: var(--yellow); border: 1px solid rgba(210,153,34,.3); }
+    .rec-pass     { background: rgba(248,81,73,.15);  color: var(--red);    border: 1px solid rgba(248,81,73,.3);  }
+
+    .report-body     { padding: 18px 22px; }
+    .report-section  { margin-bottom: 16px; }
+    .report-section:last-child { margin-bottom: 0; }
+    .report-label    { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin-bottom: 6px; }
+    .report-text     { font-size: 14px; line-height: 1.65; }
+    .strengths-list  { display: flex; flex-wrap: wrap; gap: 8px; }
+    .strength-tag {
+      background: rgba(88,166,255,.1);
+      border: 1px solid rgba(88,166,255,.25);
+      border-radius: 6px;
+      color: var(--primary);
+      font-size: 13px;
+      padding: 4px 12px;
+    }
+
+    /* ── Teams grid ── */
+    .teams-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+      margin-top: 4px;
+    }
+    .team-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      transition: border-color .15s;
+    }
+    .team-card:hover { border-color: var(--primary); }
+    .team-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .team-record { display: flex; gap: 8px; }
+    .record-stat { text-align: center; flex: 1; }
+    .record-stat .val  { font-size: 18px; font-weight: 700; color: #fff; }
+    .record-stat .lbl  { font-size: 10px; color: var(--muted); margin-top: 1px; }
+    .record-stat.w .val { color: var(--green); }
+    .record-stat.l .val { color: var(--red); }
+
+    .empty-state {
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+      padding: 32px 0;
+    }
+
+    /* ── Teams filter row ── */
+    .filter-row { margin-bottom: 18px; }
+    .filter-row input { max-width: 280px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">⚽</div>
+  <div class="header-text">
+    <h1>Scout WC26</h1>
+    <p>AI-powered scouting for the 2026 FIFA World Cup</p>
+  </div>
+  <div class="badge">Gemini 2.5 Flash · BigQuery</div>
+</header>
+
+<main>
+
+  <!-- ── Section 1: Natural Language Query ── -->
+  <div class="card">
+    <div class="card-header">
+      <div class="icon">🔍</div>
+      <div>
+        <h2>Scouting Query</h2>
+        <p>Ask anything about players, teams, or match performance</p>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="input-row">
+        <input
+          type="text"
+          id="query-input"
+          placeholder="e.g. Who are the best young midfielders under 23?"
+        />
+        <button id="query-btn" onclick="submitQuery()">Ask Agent</button>
+      </div>
+      <div class="spinner" id="query-spinner"></div>
+      <div class="answer-box" id="query-answer"></div>
+    </div>
+  </div>
+
+  <!-- ── Section 2: Player Scouting Report ── -->
+  <div class="card">
+    <div class="card-header">
+      <div class="icon">📋</div>
+      <div>
+        <h2>Player Scouting Report</h2>
+        <p>Generate a structured AI report for any player in the database</p>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="input-row">
+        <input
+          type="text"
+          id="player-input"
+          placeholder="e.g. Mbappe, Vinicius, Bellingham"
+        />
+        <button id="player-btn" onclick="fetchReport()">Generate Report</button>
+      </div>
+      <div class="spinner" id="player-spinner"></div>
+      <div class="answer-box" id="player-error"></div>
+      <div class="report-card" id="report-card">
+        <div class="report-hero">
+          <div class="player-avatar" id="report-avatar">👤</div>
+          <div class="player-info">
+            <h3 id="report-name"></h3>
+            <div class="player-meta" id="report-meta"></div>
+          </div>
+        </div>
+        <div class="report-body">
+          <div class="report-section">
+            <div class="report-label">Assessment</div>
+            <div class="report-text" id="report-summary"></div>
+          </div>
+          <div class="report-section">
+            <div class="report-label">Key Strengths</div>
+            <div class="strengths-list" id="report-strengths"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 3: Team Browser ── -->
+  <div class="card">
+    <div class="card-header">
+      <div class="icon">🏆</div>
+      <div>
+        <h2>Team Browser</h2>
+        <p>World Cup qualifying teams with win / draw / loss records</p>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="filter-row">
+        <input
+          type="text"
+          id="team-filter"
+          placeholder="Filter by team name…"
+          oninput="filterTeams(this.value)"
+        />
+      </div>
+      <div class="spinner" id="teams-spinner"></div>
+      <div class="teams-grid" id="teams-grid">
+        <div class="empty-state">Loading teams…</div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+  const API = "http://localhost:8000";
+  let allTeams = [];
+
+  // ── Utilities ──────────────────────────────────────────────────────────────
+
+  function setLoading(spinnerId, btnId, loading) {
+    document.getElementById(spinnerId).classList.toggle("visible", loading);
+    const btn = document.getElementById(btnId);
+    if (btn) btn.disabled = loading;
+  }
+
+  function showError(boxId, message) {
+    const el = document.getElementById(boxId);
+    el.textContent = "⚠ " + message;
+    el.className = "answer-box error visible";
+  }
+
+  // ── Section 1: Query ───────────────────────────────────────────────────────
+
+  document.getElementById("query-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") submitQuery();
+  });
+
+  async function submitQuery() {
+    const q = document.getElementById("query-input").value.trim();
+    if (!q) return;
+
+    const box = document.getElementById("query-answer");
+    box.className = "answer-box";
+    box.textContent = "";
+    setLoading("query-spinner", "query-btn", true);
+
+    try {
+      const res = await fetch(`${API}/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: q }),
+      });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const data = await res.json();
+      box.textContent = data.answer;
+      box.className = "answer-box visible";
+    } catch (err) {
+      showError("query-answer", err.message || "Failed to reach the API");
+    } finally {
+      setLoading("query-spinner", "query-btn", false);
+    }
+  }
+
+  // ── Section 2: Player Report ───────────────────────────────────────────────
+
+  document.getElementById("player-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") fetchReport();
+  });
+
+  function recClass(rec) {
+    if (!rec) return "";
+    const r = rec.toLowerCase();
+    if (r.includes("priority")) return "rec-priority";
+    if (r.includes("monitor"))  return "rec-monitor";
+    return "rec-pass";
+  }
+
+  async function fetchReport() {
+    const name = document.getElementById("player-input").value.trim();
+    if (!name) return;
+
+    document.getElementById("player-error").className = "answer-box";
+    document.getElementById("report-card").className = "report-card";
+    setLoading("player-spinner", "player-btn", true);
+
+    try {
+      const res = await fetch(`${API}/report/${encodeURIComponent(name)}`, {
+        method: "POST",
+      });
+
+      if (res.status === 404) throw new Error(`Player "${name}" not found in database`);
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+
+      const r = await res.json();
+
+      // Populate hero
+      document.getElementById("report-avatar").textContent =
+        r.position === "GK" ? "🧤" :
+        r.position === "DEF" ? "🛡️" :
+        r.position === "MID" ? "⚙️" : "⚡";
+
+      document.getElementById("report-name").textContent = r.player_name;
+
+      const meta = document.getElementById("report-meta");
+      meta.innerHTML = [
+        r.position && `<span class="meta-chip">${r.position}</span>`,
+        r.team      && `<span class="meta-chip">🏳️ ${r.team}</span>`,
+        r.age       && `<span class="meta-chip">Age ${r.age}</span>`,
+        r.recommendation && `<span class="rec-chip ${recClass(r.recommendation)}">${r.recommendation}</span>`,
+      ].filter(Boolean).join("");
+
+      // Summary
+      document.getElementById("report-summary").textContent = r.summary || "—";
+
+      // Strengths
+      const strengths = document.getElementById("report-strengths");
+      strengths.innerHTML = (r.strengths || [])
+        .map(s => `<span class="strength-tag">${s}</span>`)
+        .join("");
+
+      document.getElementById("report-card").className = "report-card visible";
+    } catch (err) {
+      showError("player-error", err.message || "Failed to generate report");
+    } finally {
+      setLoading("player-spinner", "player-btn", false);
+    }
+  }
+
+  // ── Section 3: Teams ───────────────────────────────────────────────────────
+
+  async function loadTeams() {
+    setLoading("teams-spinner", null, true);
+    const grid = document.getElementById("teams-grid");
+
+    try {
+      const res = await fetch(`${API}/teams`);
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const data = await res.json();
+      allTeams = data.teams || [];
+      renderTeams(allTeams);
+    } catch (err) {
+      grid.innerHTML = `<div class="empty-state" style="color:var(--red)">⚠ ${err.message}</div>`;
+    } finally {
+      document.getElementById("teams-spinner").classList.remove("visible");
+    }
+  }
+
+  function renderTeams(teams) {
+    const grid = document.getElementById("teams-grid");
+    if (!teams.length) {
+      grid.innerHTML = '<div class="empty-state">No teams found</div>';
+      return;
+    }
+    grid.innerHTML = teams.map(t => `
+      <div class="team-card">
+        <div class="team-name" title="${t.team_name || ''}">${t.team_name || "—"}</div>
+        <div class="team-record">
+          <div class="record-stat w">
+            <div class="val">${t.wins ?? "—"}</div>
+            <div class="lbl">W</div>
+          </div>
+          <div class="record-stat">
+            <div class="val">${t.draws ?? "—"}</div>
+            <div class="lbl">D</div>
+          </div>
+          <div class="record-stat l">
+            <div class="val">${t.losses ?? "—"}</div>
+            <div class="lbl">L</div>
+          </div>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  function filterTeams(query) {
+    const q = query.toLowerCase();
+    renderTeams(allTeams.filter(t => (t.team_name || "").toLowerCase().includes(q)));
+  }
+
+  // ── Boot ──────────────────────────────────────────────────────────────────
+  loadTeams();
+</script>
+</body>
+</html>
