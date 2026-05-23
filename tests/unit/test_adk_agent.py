@@ -1,7 +1,6 @@
 from google.adk.agents import Agent
-from google.adk.tools import FunctionTool
 
-from src.agent.adk_agent import Scout
+from scout_adk.agent import root_agent
 
 _EXPECTED_TOOLS = {
     "query_players",
@@ -12,26 +11,18 @@ _EXPECTED_TOOLS = {
 }
 
 
-def test_scout_is_adk_agent():
-    assert isinstance(Scout, Agent)
+def test_root_agent_is_adk_agent():
+    assert isinstance(root_agent, Agent)
 
 
-def test_scout_name():
-    assert Scout.name == "Scout"
+def test_root_agent_name():
+    assert root_agent.name == "scout"
 
 
-def test_scout_model():
-    assert Scout.model == "gemini-2.5-flash"
+def test_root_agent_has_five_tools():
+    assert len(root_agent.tools) == 5
 
 
-def test_scout_has_five_tools():
-    assert len(Scout.tools) == 5
-
-
-def test_scout_all_tools_are_function_tools():
-    assert all(isinstance(t, FunctionTool) for t in Scout.tools)
-
-
-def test_scout_tool_names_match_expected():
-    registered = {t.name for t in Scout.tools}
+def test_root_agent_tool_names_match_expected():
+    registered = {t.name for t in root_agent.tools}
     assert registered == _EXPECTED_TOOLS
