@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from src.agent import scout_agent
 from src.agent import tools as agent_tools
@@ -76,6 +76,221 @@ async def adk_query(request: QueryRequest) -> QueryResponse:
             final_text = "".join(p.text or "" for p in event.content.parts)
 
     return QueryResponse(answer=final_text, question=request.question)
+
+
+@app.get("/charts/position-breakdown")
+def chart_position_breakdown() -> dict:
+    sql = (
+        "SELECT position, COUNT(*) as cnt "
+        "FROM `" + config.table("gold_player_stats") + "` "
+        "GROUP BY position ORDER BY position"
+    )
+    rows = bq.run_query(sql)
+    return {
+        "labels": [r["position"] for r in rows],
+        "data": [r["cnt"] for r in rows],
+        "title": "Players by Position",
+    }
+
+
+@app.get("/charts/top-teams")
+def chart_top_teams() -> dict:
+    sql = (
+        "SELECT team_name, points "
+        "FROM `" + config.table("gold_team_summary") + "` "
+        "ORDER BY points DESC LIMIT 15"
+    )
+    rows = bq.run_query(sql)
+    return {
+        "labels": [r["team_name"] for r in rows],
+        "data": [r["points"] for r in rows],
+        "title": "Top 15 Teams by Points",
+    }
+
+
+@app.get("/charts/age-distribution")
+def chart_age_distribution() -> dict:
+    sql = (
+        "SELECT age, COUNT(*) as cnt "
+        "FROM `" + config.table("gold_player_stats") + "` "
+        "WHERE age IS NOT NULL "
+        "GROUP BY age ORDER BY age"
+    )
+    rows = bq.run_query(sql)
+    return {
+        "labels": [str(r["age"]) for r in rows],
+        "data": [r["cnt"] for r in rows],
+        "title": "Player Age Distribution",
+    }
+
+
+@app.get("/charts/nationality-breakdown")
+def chart_nationality_breakdown() -> dict:
+    sql = (
+        "SELECT nationality, COUNT(*) as cnt "
+        "FROM `" + config.table("gold_player_stats") + "` "
+        "WHERE nationality IS NOT NULL "
+        "GROUP BY nationality ORDER BY cnt DESC LIMIT 10"
+    )
+    rows = bq.run_query(sql)
+    return {
+        "labels": [r["nationality"] for r in rows],
+        "data": [r["cnt"] for r in rows],
+        "title": "Top 10 Nationalities",
+    }
+
+
+@app.post("/report/pdf/{player_name}")
+def report_pdf(player_name: str) -> Response:
+    from io import BytesIO
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    logger.info("POST /report/pdf/%s", player_name)
+
+    player = agent_tools.get_player_detail(player_name=player_name)
+    if not player:
+        raise HTTPException(status_code=404, detail=f"Player '{player_name}' not found")
+
+    team_name = player.get("team_name", "")
+    team = agent_tools.query_team_summary(team_name=team_name) if team_name else {}
+    roster = agent_tools.get_team_roster(team_name=team_name) if team_name else []
+
+    scouting_para = scout_agent.run_query(
+        f"Write a concise 2–3 sentence professional scouting assessment for "
+        f"{player.get('name', player_name)} "
+        f"({player.get('position', '')}, {player.get('nationality', '')}, "
+        f"age {player.get('age', '')}). "
+        f"Focus on their key strengths and value as a World Cup player. "
+        f"Reply with the assessment paragraph only, no extra commentary."
+    )
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        leftMargin=0.75 * inch,
+        rightMargin=0.75 * inch,
+        topMargin=0.75 * inch,
+        bottomMargin=0.75 * inch,
+    )
+
+    styles = getSampleStyleSheet()
+    BLUE = colors.HexColor("#1f6feb")
+    MUTED = colors.HexColor("#586069")
+    LIGHT = colors.HexColor("#f6f8fa")
+    BORDER = colors.HexColor("#e1e4e8")
+
+    def _style(name, **kw):
+        return ParagraphStyle(name, **kw)
+
+    header_style = _style("hdr", fontName="Helvetica-Bold", fontSize=13, textColor=BLUE, spaceAfter=2)
+    name_style = _style("nm", fontName="Helvetica-Bold", fontSize=22, spaceAfter=14)
+    section_style = _style("sec", fontName="Helvetica-Bold", fontSize=12, textColor=BLUE, spaceBefore=14, spaceAfter=6)
+    body_style = _style("bd", fontName="Helvetica", fontSize=11, leading=16, spaceAfter=4)
+    label_style = _style("lbl", fontName="Helvetica-Bold", fontSize=10, textColor=MUTED, spaceAfter=2)
+    footer_style = _style("ftr", fontName="Helvetica-Oblique", fontSize=9, textColor=MUTED, alignment=1)
+
+    story = []
+
+    story.append(Paragraph("Scout WC26 — Player Scouting Report", header_style))
+    story.append(Spacer(1, 0.08 * inch))
+    story.append(Paragraph(player.get("name", player_name), name_style))
+
+    info_data = [
+        ["Position", player.get("position", "—")],
+        ["Age", str(player.get("age", "—"))],
+        ["Nationality", player.get("nationality", "—")],
+        ["Team", player.get("team_name", "—")],
+        ["Jersey #", str(player.get("jersey_number", "—"))],
+    ]
+    info_tbl = Table(info_data, colWidths=[1.4 * inch, 4.5 * inch])
+    info_tbl.setStyle(
+        TableStyle([
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 0), (-1, -1), 11),
+            ("TEXTCOLOR", (0, 0), (0, -1), BLUE),
+            ("ROWBACKGROUNDS", (0, 0), (-1, -1), [LIGHT, colors.white]),
+            ("GRID", (0, 0), (-1, -1), 0.5, BORDER),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ])
+    )
+    story.append(info_tbl)
+
+    story.append(Paragraph("Team Performance", section_style))
+    if team:
+        perf_data = [
+            ["W", "D", "L", "GF", "GA", "Pts"],
+            [
+                str(team.get("wins", "—")),
+                str(team.get("draws", "—")),
+                str(team.get("losses", "—")),
+                str(team.get("goals_for", "—")),
+                str(team.get("goals_against", "—")),
+                str(team.get("points", "—")),
+            ],
+        ]
+        perf_tbl = Table(perf_data, colWidths=[0.9 * inch] * 6)
+        perf_tbl.setStyle(
+            TableStyle([
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 0), (-1, -1), 11),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("BACKGROUND", (0, 0), (-1, 0), BLUE),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("BACKGROUND", (0, 1), (-1, -1), LIGHT),
+                ("GRID", (0, 0), (-1, -1), 0.5, BORDER),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ])
+        )
+        story.append(perf_tbl)
+    else:
+        story.append(Paragraph("No team data available.", body_style))
+
+    story.append(Paragraph("Squad Roster", section_style))
+    if roster:
+        pos_groups: dict[str, list[str]] = {}
+        for p in roster:
+            pos = p.get("position", "UNKNOWN")
+            pos_groups.setdefault(pos, []).append(p.get("name", ""))
+        for pos in ["GK", "DEF", "MID", "FWD", "UNKNOWN"]:
+            names = pos_groups.get(pos)
+            if names:
+                story.append(Paragraph(pos, label_style))
+                story.append(Paragraph(", ".join(names), body_style))
+    else:
+        story.append(Paragraph("No roster data available.", body_style))
+
+    story.append(Paragraph("Scouting Assessment", section_style))
+    story.append(Paragraph(scouting_para or "No assessment available.", body_style))
+
+    story.append(Spacer(1, 0.4 * inch))
+    story.append(Paragraph("Generated by Scout WC26 | Powered by Gemini + BigQuery", footer_style))
+
+    doc.build(story)
+    buffer.seek(0)
+
+    safe_name = player.get("name", player_name).replace(" ", "_")
+    return Response(
+        content=buffer.read(),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}_scouting_report.pdf"'},
+    )
 
 
 @app.post("/report/{player_name}", response_model=ReportResponse)
