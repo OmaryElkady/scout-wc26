@@ -32,8 +32,21 @@ _AI_ROWS = [
 _AI_PLAN_JSON = (
     '{"sql": "SELECT team_name, COUNT(*) AS cnt FROM `x.gold_player_stats`'
     ' WHERE position = \'FWD\' AND age < 22 GROUP BY team_name LIMIT 20",'
-    ' "chart_type": "bar", "title": "Forwards Under 22 by Team"}'
+    ' "chart_type": "bar", "title": "Forwards Under 22 by Team", "error": null}'
 )
+
+_AI_PLAN_JSON_MATCH_RESULTS = (
+    '{"sql": "SELECT winner, COUNT(*) AS wins FROM `x.gold_match_results`'
+    ' GROUP BY winner ORDER BY wins DESC LIMIT 20",'
+    ' "chart_type": "bar", "title": "Wins per Team", "error": null}'
+)
+
+_AI_MATCH_ROWS = [
+    {"winner": "France", "wins": 8},
+    {"winner": "Brazil", "wins": 7},
+]
+
+_AI_ERROR_JSON = '{"sql": null, "chart_type": null, "title": null, "error": "Player goal/assist stats are not available at the free API tier."}'
 
 
 # ---------------------------------------------------------------------------
@@ -211,3 +224,70 @@ async def test_ai_generate_labels_and_data_same_length(mock_bq, mock_client_cls)
         response = await client.post("/charts/ai-generate", json={"request": "test"})
     data = response.json()
     assert len(data["labels"]) == len(data["data"])
+
+
+# ---------------------------------------------------------------------------
+# POST /charts/ai-generate — error path (Gemini returns error field)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("google.genai.Client")
+@patch("src.utils.bq_client.bq.run_query", return_value=[])
+async def test_ai_generate_error_field_returns_422(mock_bq, mock_client_cls):
+    mock_resp = MagicMock()
+    mock_resp.text = _AI_ERROR_JSON
+    mock_client_cls.return_value.models.generate_content.return_value = mock_resp
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/charts/ai-generate", json={"request": "goals scored by Mbappe"})
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+@patch("google.genai.Client")
+@patch("src.utils.bq_client.bq.run_query", return_value=[])
+async def test_ai_generate_error_field_has_detail(mock_bq, mock_client_cls):
+    mock_resp = MagicMock()
+    mock_resp.text = _AI_ERROR_JSON
+    mock_client_cls.return_value.models.generate_content.return_value = mock_resp
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/charts/ai-generate", json={"request": "goals scored by Mbappe"})
+    data = response.json()
+    assert "detail" in data
+    assert len(data["detail"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# POST /charts/ai-generate — gold_match_results table
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("google.genai.Client")
+@patch("src.utils.bq_client.bq.run_query", return_value=_AI_MATCH_ROWS)
+async def test_ai_generate_match_results_returns_200(mock_bq, mock_client_cls):
+    mock_resp = MagicMock()
+    mock_resp.text = _AI_PLAN_JSON_MATCH_RESULTS
+    mock_client_cls.return_value.models.generate_content.return_value = mock_resp
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/charts/ai-generate", json={"request": "wins per team"})
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+@patch("google.genai.Client")
+@patch("src.utils.bq_client.bq.run_query", return_value=_AI_MATCH_ROWS)
+async def test_ai_generate_prompt_includes_gold_match_results(mock_bq, mock_client_cls):
+    mock_resp = MagicMock()
+    mock_resp.text = _AI_PLAN_JSON_MATCH_RESULTS
+    mock_client_cls.return_value.models.generate_content.return_value = mock_resp
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.post("/charts/ai-generate", json={"request": "wins per team"})
+
+    call_kwargs = mock_client_cls.return_value.models.generate_content.call_args
+    prompt_text = call_kwargs[1].get("contents") or call_kwargs[0][1]
+    assert "gold_match_results" in prompt_text

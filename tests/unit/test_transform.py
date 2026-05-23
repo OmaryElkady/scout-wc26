@@ -47,10 +47,11 @@ def test_run_gold_transforms_calls_both_sql_files():
 
         transform.run_gold_transforms()
 
-    assert mock_bq.run_query.call_count == 2
+    assert mock_bq.run_query.call_count == 3
     sqls = [c.args[0] for c in mock_bq.run_query.call_args_list]
     assert any("gold_player_stats" in sql for sql in sqls)
     assert any("gold_team_summary" in sql for sql in sqls)
+    assert any("gold_match_results" in sql for sql in sqls)
 
 
 def test_run_gold_transforms_references_silver_sources():
@@ -88,7 +89,7 @@ def test_run_all_calls_silver_before_gold():
 
         transform.run_all()
 
-    assert mock_bq.run_query.call_count == 4
+    assert mock_bq.run_query.call_count == 5
     silver_indices = [i for i, v in enumerate(call_order) if v == "silver"]
     gold_indices = [i for i, v in enumerate(call_order) if v == "gold"]
     assert silver_indices, "No silver queries ran"
@@ -105,4 +106,4 @@ def test_run_all_total_query_count():
 
         transform.run_all()
 
-    assert mock_bq.run_query.call_count == 4
+    assert mock_bq.run_query.call_count == 5
