@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.pyc
+.env
+*.db
+scripts/
+tests/
+*.egg-info/
+.git/
+my_football_connector/configuration.json
