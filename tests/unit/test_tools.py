@@ -42,7 +42,7 @@ def test_query_players_position_filter_in_sql():
         query_players(position="Forward")
         sql = mock_bq.run_query.call_args[0][0]
         assert "position" in sql.lower()
-        assert "Forward" in sql
+        assert "FWD" in sql  # _normalize_position converts "Forward" → "FWD"
 
 
 def test_query_players_nationality_filter_in_sql():
@@ -218,7 +218,7 @@ def test_get_top_players_by_position_applies_position_filter():
         mock_bq.run_query.return_value = []
         get_top_players_by_position("Defender")
         sql = mock_bq.run_query.call_args[0][0]
-        assert "Defender" in sql
+        assert "DEF" in sql  # _normalize_position converts "Defender" → "DEF"
 
 
 def test_get_top_players_by_position_custom_limit_in_sql():
