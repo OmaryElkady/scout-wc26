@@ -16,6 +16,11 @@ _REQUIRED_VARS = [
     "FIVETRAN_CONNECTOR_ID",
     "RAPIDAPI_KEY",
     "RAPIDAPI_HOST",
+    # GOOGLE_APPLICATION_CREDENTIALS is intentionally omitted: on Cloud Run,
+    # Application Default Credentials are provided by the service account
+    # identity automatically. Locally, set this env var in .env to point to
+    # a service account JSON file. The google-auth library picks it up
+    # without any explicit handling here.
 ]
 
 
