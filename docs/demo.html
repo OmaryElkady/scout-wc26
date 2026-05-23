@@ -317,6 +317,44 @@
       border-color: var(--green) !important;
       color: var(--green) !important;
     }
+
+    /* ── Prompt chips ── */
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .prompt-chip {
+      background: rgba(88,166,255,.08);
+      border: 1px solid rgba(88,166,255,.25);
+      border-radius: 20px;
+      color: var(--primary);
+      cursor: pointer;
+      font-family: var(--font);
+      font-size: 11px;
+      padding: 3px 10px;
+      transition: background .15s, border-color .15s;
+      white-space: nowrap;
+    }
+    .prompt-chip:hover {
+      background: rgba(88,166,255,.18);
+      border-color: var(--primary);
+    }
+
+    /* ── AI chart info box (for 422 / unavailable data messages) ── */
+    .chart-info-box {
+      display: none;
+      background: rgba(88,166,255,.07);
+      border: 1px solid rgba(88,166,255,.25);
+      border-radius: 8px;
+      color: var(--primary);
+      font-size: 12px;
+      line-height: 1.55;
+      margin-bottom: 8px;
+      padding: 10px 14px;
+    }
+    .chart-info-box.visible { display: block; }
   </style>
 </head>
 <body>
@@ -478,6 +516,14 @@
             />
             <button class="chart-btn" id="ai-chart-btn" onclick="generateAiChart()">Generate</button>
           </div>
+          <div class="chip-row">
+            <span class="prompt-chip" onclick="fillAiPrompt(this)">Show goals scored per match involving Belarus</span>
+            <span class="prompt-chip" onclick="fillAiPrompt(this)">Compare average age across all squads</span>
+            <span class="prompt-chip" onclick="fillAiPrompt(this)">Which teams have the most draws?</span>
+            <span class="prompt-chip" onclick="fillAiPrompt(this)">Show England's match results</span>
+            <span class="prompt-chip" onclick="fillAiPrompt(this)">Top 10 youngest players by position</span>
+          </div>
+          <div class="chart-info-box" id="ai-chart-info"></div>
           <div class="chart-spinner" id="ai-chart-spinner"></div>
           <div class="chart-wrap" id="ai-wrap">
             <canvas id="chart-ai"></canvas>
@@ -813,6 +859,11 @@
     if (e.key === "Enter") generateAiChart();
   });
 
+  function fillAiPrompt(chipEl) {
+    document.getElementById("ai-chart-input").value = chipEl.textContent;
+    generateAiChart();
+  }
+
   async function generateAiChart() {
     const request = document.getElementById("ai-chart-input").value.trim();
     if (!request) return;
@@ -820,10 +871,12 @@
     const titleEl  = document.getElementById("chart-ai-title");
     const spinner  = document.getElementById("ai-chart-spinner");
     const btn      = document.getElementById("ai-chart-btn");
+    const infoBox  = document.getElementById("ai-chart-info");
 
     spinner.classList.add("visible");
     btn.disabled = true;
     if (titleEl) titleEl.textContent = "Generating…";
+    if (infoBox) infoBox.className = "chart-info-box";
     _ensureCanvas("ai-wrap", "chart-ai");
 
     try {
@@ -832,6 +885,18 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ request }),
       });
+
+      if (res.status === 422) {
+        const err = await res.json();
+        if (titleEl) titleEl.textContent = "AI-Generated Chart";
+        if (infoBox) {
+          infoBox.textContent = "ℹ️ " + (err.detail || "This data isn't available. Try: 'Show goals scored per match by Belarus' or 'Compare squad ages of France and Spain'");
+          infoBox.className = "chart-info-box visible";
+        }
+        _ensureCanvas("ai-wrap", "chart-ai");
+        return;
+      }
+
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const payload = await res.json();
 
