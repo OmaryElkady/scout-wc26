@@ -1,4 +1,5 @@
 import logging
+import os
 import pathlib
 from typing import Optional
 
@@ -119,3 +120,10 @@ def players(
     )
     rows = rows[:50]
     return PlayerListResponse(players=rows, count=len(rows))
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(app, host="0.0.0.0", port=port)
