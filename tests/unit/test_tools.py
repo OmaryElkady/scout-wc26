@@ -1,7 +1,9 @@
 from unittest.mock import patch
 
 from src.agent.tools import (
+    get_league_overview,
     get_player_detail,
+    get_team_roster,
     get_top_players_by_position,
     query_players,
     query_team_summary,
@@ -146,6 +148,18 @@ def test_query_team_summary_uses_config_table(monkeypatch):
         query_team_summary(team_name="France")
         sql = mock_bq.run_query.call_args[0][0]
         assert "proj-test.ds_test.gold_team_summary" in sql
+
+
+def test_query_team_summary_no_args_returns_all_teams():
+    with patch("src.agent.tools.bq") as mock_bq:
+        expected = [{"team_id": "1", "team_name": "France", "points": 9}]
+        mock_bq.run_query.return_value = expected
+        result = query_team_summary()
+        assert isinstance(result, list)
+        assert result == expected
+        sql = mock_bq.run_query.call_args[0][0]
+        assert "ORDER BY points DESC" in sql
+        assert "WHERE" not in sql
 
 
 # ---------------------------------------------------------------------------
@@ -303,3 +317,106 @@ def test_refresh_scouting_data_pipeline_failure_returns_error():
     assert result["status"] == "error"
     assert result["step_failed"] == "pipeline"
     assert "pipeline boom" in result["message"]
+
+
+# ---------------------------------------------------------------------------
+# get_team_roster
+# ---------------------------------------------------------------------------
+
+
+def test_get_team_roster_filters_by_team_name():
+    with patch("src.agent.tools.bq") as mock_bq:
+        expected = [{"name": "Mbappe", "position": "FWD", "age": 25, "nationality": "France"}]
+        mock_bq.run_query.return_value = expected
+        result = get_team_roster("France")
+        sql = mock_bq.run_query.call_args[0][0]
+        assert "team_name" in sql.lower()
+        assert "france" in sql.lower()
+        assert result == expected
+
+
+def test_get_team_roster_sql_has_order_by():
+    with patch("src.agent.tools.bq") as mock_bq:
+        mock_bq.run_query.return_value = []
+        get_team_roster("Germany")
+        sql = mock_bq.run_query.call_args[0][0]
+        assert "ORDER BY" in sql
+
+
+def test_get_team_roster_empty_team_returns_empty_list():
+    with patch("src.agent.tools.bq") as mock_bq:
+        mock_bq.run_query.return_value = []
+        assert get_team_roster("Atlantis") == []
+
+
+def test_get_team_roster_uses_config_table(monkeypatch):
+    monkeypatch.setattr(config_module.config, "PROJECT_ID", "proj-test")
+    monkeypatch.setattr(config_module.config, "BQ_DATASET", "ds_test")
+    with patch("src.agent.tools.bq") as mock_bq:
+        mock_bq.run_query.return_value = []
+        get_team_roster("France")
+        sql = mock_bq.run_query.call_args[0][0]
+        assert "proj-test.ds_test.gold_player_stats" in sql
+
+
+# ---------------------------------------------------------------------------
+# get_league_overview
+# ---------------------------------------------------------------------------
+
+
+def _make_bq_side_effect():
+    def side_effect(sql):
+        if "COUNT(DISTINCT" in sql:
+            return [{"total_players": 1391, "total_teams": 50}]
+        if "DISTINCT team_name" in sql:
+            return [{"team_name": "France"}, {"team_name": "Germany"}]
+        if "GROUP BY position" in sql:
+            return [
+                {"position": "GK", "cnt": 100},
+                {"position": "DEF", "cnt": 400},
+                {"position": "MID", "cnt": 500},
+                {"position": "FWD", "cnt": 391},
+            ]
+        if "GROUP BY nationality" in sql:
+            return [{"nationality": "French", "cnt": 30}, {"nationality": "German", "cnt": 28}]
+        return []
+
+    return side_effect
+
+
+def test_get_league_overview_returns_required_keys():
+    with patch("src.agent.tools.bq") as mock_bq:
+        mock_bq.run_query.side_effect = _make_bq_side_effect()
+        result = get_league_overview()
+    for key in ("total_players", "total_teams", "teams", "position_breakdown", "top_nationalities", "competition"):
+        assert key in result
+
+
+def test_get_league_overview_totals_from_counts_query():
+    with patch("src.agent.tools.bq") as mock_bq:
+        mock_bq.run_query.side_effect = _make_bq_side_effect()
+        result = get_league_overview()
+    assert result["total_players"] == 1391
+    assert result["total_teams"] == 50
+
+
+def test_get_league_overview_teams_sorted_alphabetically():
+    with patch("src.agent.tools.bq") as mock_bq:
+        mock_bq.run_query.side_effect = _make_bq_side_effect()
+        result = get_league_overview()
+    assert result["teams"] == ["France", "Germany"]
+
+
+def test_get_league_overview_position_breakdown_is_dict():
+    with patch("src.agent.tools.bq") as mock_bq:
+        mock_bq.run_query.side_effect = _make_bq_side_effect()
+        result = get_league_overview()
+    assert isinstance(result["position_breakdown"], dict)
+    assert result["position_breakdown"]["GK"] == 100
+
+
+def test_get_league_overview_competition_string():
+    with patch("src.agent.tools.bq") as mock_bq:
+        mock_bq.run_query.side_effect = _make_bq_side_effect()
+        result = get_league_overview()
+    assert "10195" in result["competition"]
