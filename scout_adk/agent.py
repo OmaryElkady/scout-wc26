@@ -27,6 +27,10 @@ root_agent = Agent(
         "When asked about teams use query_team_summary. "
         "When asked for top players by position use get_top_players_by_position. "
         "When asked to refresh or update data use refresh_scouting_data.\n\n"
+        "When asked broadly about teams or performance with no specific team mentioned, "
+        "call query_team_summary with no arguments to get all teams ranked. "
+        "When asked what data or leagues are available, call get_league_overview. "
+        "When asked about a team's players or squad, call get_team_roster with the team name.\n\n"
         "Always provide specific names, ages, and nationalities. "
         "Be concise but informative like a real football scout."
     ),
@@ -35,6 +39,8 @@ root_agent = Agent(
         agent_tools.query_team_summary,
         agent_tools.get_player_detail,
         agent_tools.get_top_players_by_position,
+        agent_tools.get_team_roster,
+        agent_tools.get_league_overview,
         agent_tools.refresh_scouting_data,
     ],
 )
