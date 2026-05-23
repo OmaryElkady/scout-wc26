@@ -146,6 +146,32 @@ class FootballAPIClient:
         # player key: verify against live API response if empty.
         return data.get("player", {})
 
+    def get_live_matches(self) -> list[dict]:
+        """Fetch all currently live matches. Never cached — always fresh."""
+        logger.info("Fetching live matches from API")
+        data = self._get("/football-get-livescores-matches-events")
+        resp = data.get("response", {})
+        if isinstance(resp, list):
+            return resp
+        return (
+            resp.get("matches")
+            or resp.get("events")
+            or resp.get("liveMatches")
+            or []
+        )
+
+    def get_matches_by_date(self, date_str: str) -> list[dict]:
+        """Fetch scheduled matches for date_str (YYYY-MM-DD). Never cached."""
+        logger.info("Fetching matches for %s (leagueid=%d)", date_str, _WORLD_CUP_LEAGUE_ID)
+        data = self._get(
+            "/football-get-matches-by-date-and-league",
+            {"leagueid": _WORLD_CUP_LEAGUE_ID, "date": date_str},
+        )
+        resp = data.get("response", {})
+        if isinstance(resp, list):
+            return resp
+        return resp.get("matches") or resp.get("fixtures") or []
+
     def get_all_world_cup_players(self) -> list[dict]:
         """Fetch every player across all World Cup teams.
 
