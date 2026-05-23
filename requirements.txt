@@ -69,6 +69,7 @@ python-dotenv==1.0.0
 python-multipart==0.0.29
 PyYAML==6.0.3
 referencing==0.37.0
+reportlab==4.2.5
 requests==2.34.2
 rich==15.0.0
 rich-toolkit==0.19.10
