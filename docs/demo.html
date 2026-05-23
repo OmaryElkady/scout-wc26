@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Scout WC26 — AI Football Scouting</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -259,6 +260,40 @@
     /* ── Teams filter row ── */
     .filter-row { margin-bottom: 18px; }
     .filter-row input { max-width: 280px; }
+
+    /* ── Charts ── */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+    @media (max-width: 680px) {
+      .charts-grid { grid-template-columns: 1fr; }
+    }
+    .chart-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 18px;
+    }
+    .chart-card-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      color: var(--muted);
+      margin-bottom: 14px;
+    }
+    .chart-wrap {
+      position: relative;
+      height: 240px;
+    }
+
+    /* ── PDF status ── */
+    .pdf-success {
+      border-color: var(--green) !important;
+      color: var(--green) !important;
+    }
   </style>
 </head>
 <body>
@@ -361,6 +396,68 @@
       <div class="teams-grid" id="teams-grid">
         <div class="empty-state">Loading teams…</div>
       </div>
+    </div>
+  </div>
+
+  <!-- ── Section 4: Analytics Dashboard ── -->
+  <div class="card">
+    <div class="card-header">
+      <div class="icon">📊</div>
+      <div>
+        <h2>Analytics Dashboard</h2>
+        <p>Live charts drawn from BigQuery gold tables</p>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="charts-grid">
+        <div class="chart-card">
+          <div class="chart-card-title" id="chart-positions-title">Players by Position</div>
+          <div class="chart-wrap">
+            <canvas id="chart-positions"></canvas>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-title" id="chart-teams-title">Top 15 Teams by Points</div>
+          <div class="chart-wrap">
+            <canvas id="chart-teams"></canvas>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-title" id="chart-ages-title">Player Age Distribution</div>
+          <div class="chart-wrap">
+            <canvas id="chart-ages"></canvas>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-title" id="chart-nationalities-title">Top 10 Nationalities</div>
+          <div class="chart-wrap">
+            <canvas id="chart-nationalities"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 5: PDF Report Download ── -->
+  <div class="card">
+    <div class="card-header">
+      <div class="icon">📄</div>
+      <div>
+        <h2>PDF Scouting Report</h2>
+        <p>Download a full PDF report for any player, powered by Gemini</p>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="input-row">
+        <input
+          type="text"
+          id="pdf-input"
+          placeholder="e.g. Mbappe, Vinicius, Bellingham"
+        />
+        <button id="pdf-btn" onclick="downloadPdf()">Generate PDF Report</button>
+      </div>
+      <div class="spinner" id="pdf-spinner"></div>
+      <div class="answer-box" id="pdf-status"></div>
     </div>
   </div>
 
@@ -532,8 +629,159 @@
     renderTeams(allTeams.filter(t => (t.team_name || "").toLowerCase().includes(q)));
   }
 
+  // ── Section 4: Analytics Dashboard ────────────────────────────────────────
+
+  Chart.defaults.color = "#8b949e";
+  Chart.defaults.borderColor = "#30363d";
+
+  const C = {
+    blue:   "#58a6ff",
+    green:  "#3fb950",
+    yellow: "#d29922",
+    red:    "#f85149",
+    muted:  "#8b949e",
+  };
+
+  const CHART_CONFIGS = [
+    {
+      canvasId: "chart-positions",
+      titleId: "chart-positions-title",
+      url: "/charts/position-breakdown",
+      type: "doughnut",
+      colors: [C.blue, C.green, C.yellow, C.red, C.muted],
+    },
+    {
+      canvasId: "chart-teams",
+      titleId: "chart-teams-title",
+      url: "/charts/top-teams",
+      type: "bar",
+      colors: C.blue,
+      indexAxis: "x",
+    },
+    {
+      canvasId: "chart-ages",
+      titleId: "chart-ages-title",
+      url: "/charts/age-distribution",
+      type: "line",
+      colors: C.green,
+    },
+    {
+      canvasId: "chart-nationalities",
+      titleId: "chart-nationalities-title",
+      url: "/charts/nationality-breakdown",
+      type: "bar",
+      colors: C.yellow,
+      indexAxis: "y",
+    },
+  ];
+
+  async function loadCharts() {
+    for (const cfg of CHART_CONFIGS) {
+      try {
+        const res = await fetch(`${API}${cfg.url}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const { labels, data, title } = await res.json();
+
+        const canvas = document.getElementById(cfg.canvasId);
+        const multiColor = Array.isArray(cfg.colors);
+        const isDoughnut = cfg.type === "doughnut";
+        const isLine = cfg.type === "line";
+
+        new Chart(canvas, {
+          type: cfg.type,
+          data: {
+            labels,
+            datasets: [{
+              data,
+              backgroundColor: isDoughnut
+                ? cfg.colors
+                : (isLine ? "transparent" : (multiColor ? cfg.colors : cfg.colors + "33")),
+              borderColor: multiColor ? cfg.colors : cfg.colors,
+              borderWidth: isLine ? 2 : 1,
+              fill: isLine,
+              tension: isLine ? 0.35 : 0,
+              pointRadius: isLine ? 2 : 0,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: cfg.indexAxis || "x",
+            plugins: {
+              legend: {
+                display: isDoughnut,
+                labels: { color: "#c9d1d9", padding: 14, boxWidth: 12 },
+              },
+              tooltip: { callbacks: {} },
+            },
+            scales: isDoughnut ? {} : {
+              x: {
+                ticks: { color: "#8b949e", maxRotation: 45 },
+                grid: { color: "#30363d" },
+              },
+              y: {
+                ticks: { color: "#8b949e" },
+                grid: { color: "#30363d" },
+              },
+            },
+          },
+        });
+
+        const titleEl = document.getElementById(cfg.titleId);
+        if (titleEl) titleEl.textContent = title;
+      } catch (err) {
+        const wrap = document.getElementById(cfg.canvasId)?.closest(".chart-card");
+        if (wrap) wrap.innerHTML =
+          `<div class="empty-state" style="color:var(--red)">⚠ ${err.message}</div>`;
+      }
+    }
+  }
+
+  // ── Section 5: PDF Report Download ────────────────────────────────────────
+
+  document.getElementById("pdf-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") downloadPdf();
+  });
+
+  async function downloadPdf() {
+    const name = document.getElementById("pdf-input").value.trim();
+    if (!name) return;
+
+    const statusEl = document.getElementById("pdf-status");
+    statusEl.className = "answer-box";
+    statusEl.textContent = "";
+    setLoading("pdf-spinner", "pdf-btn", true);
+
+    try {
+      const res = await fetch(`${API}/report/pdf/${encodeURIComponent(name)}`, {
+        method: "POST",
+      });
+
+      if (res.status === 404) throw new Error(`Player "${name}" not found in database`);
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${name.replace(/\s+/g, "_")}_scouting_report.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      statusEl.textContent = `✓ PDF generated for ${name} — check your downloads`;
+      statusEl.className = "answer-box visible pdf-success";
+    } catch (err) {
+      showError("pdf-status", err.message || "Failed to generate PDF");
+    } finally {
+      setLoading("pdf-spinner", "pdf-btn", false);
+    }
+  }
+
   // ── Boot ──────────────────────────────────────────────────────────────────
   loadTeams();
+  loadCharts();
 </script>
 </body>
 </html>
