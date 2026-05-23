@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scout WC26 — System Architecture</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: #0f1117;
+    color: #e8eaed;
+    min-height: 100vh;
+    padding: 40px 20px 60px;
+  }
+  h1 {
+    text-align: center;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #fff;
+    margin-bottom: 6px;
+  }
+  .subtitle {
+    text-align: center;
+    font-size: 13px;
+    color: #9aa0a6;
+    margin-bottom: 48px;
+    letter-spacing: 0.5px;
+  }
+  .diagram-wrapper {
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  /* LAYER ROWS */
+  .layer {
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: 0;
+    position: relative;
+  }
+  .layer-label {
+    width: 110px;
+    min-width: 110px;
+    padding-top: 18px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: #5f6368;
+    text-align: right;
+    padding-right: 16px;
+  }
+  .layer-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0;
+    position: relative;
+  }
+
+  /* CONNECTOR ARROWS between layers */
+  .connector {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 36px;
+    margin-left: 110px;
+  }
+  .connector svg {
+    display: block;
+  }
+
+  /* NODE BOXES */
+  .node {
+    border-radius: 8px;
+    padding: 14px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    min-width: 140px;
+  }
+  .node .node-title {
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  .node .node-sub {
+    font-size: 10.5px;
+    font-weight: 400;
+    opacity: 0.8;
+    line-height: 1.4;
+  }
+  .node .node-icon {
+    font-size: 22px;
+    line-height: 1;
+  }
+
+  /* COLOR THEMES */
+  .source {
+    background: #1a2d5a;
+    border: 2px solid #4285F4;
+    color: #a8c4f8;
+  }
+  .source .node-title { color: #7badf8; }
+
+  .ingestion {
+    background: #152e1f;
+    border: 2px solid #34A853;
+    color: #a8d5b5;
+  }
+  .ingestion .node-title { color: #6fcf97; }
+
+  .bq {
+    background: #152e1f;
+    border: 2px solid #34A853;
+    color: #a8d5b5;
+  }
+  .bq .node-title { color: #6fcf97; }
+
+  .agent {
+    background: #3a1515;
+    border: 2px solid #EA4335;
+    color: #f5b7b1;
+  }
+  .agent .node-title { color: #f1948a; }
+
+  .api {
+    background: #3b3000;
+    border: 2px solid #FBBC04;
+    color: #fde68a;
+  }
+  .api .node-title { color: #fcd34d; }
+
+  /* TABLE GROUPS */
+  .table-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .table-item {
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 11.5px;
+    font-weight: 500;
+    text-align: center;
+    white-space: nowrap;
+    font-family: 'Courier New', monospace;
+  }
+  .table-item.bq-table {
+    background: #1a3d25;
+    border: 1.5px solid #34A853;
+    color: #86efac;
+  }
+
+  /* ARROW STYLES */
+  .h-arrow {
+    display: flex;
+    align-items: center;
+    padding: 0 6px;
+  }
+  .h-arrow svg { display: block; }
+
+  /* TOOL CHIPS */
+  .tools-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+    margin-top: 8px;
+  }
+  .tool-chip {
+    background: #2d0a0a;
+    border: 1.5px solid #c0392b;
+    border-radius: 20px;
+    padding: 4px 11px;
+    font-size: 10.5px;
+    color: #f5b7b1;
+    font-family: 'Courier New', monospace;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  /* FULL LAYER LAYOUT */
+  .row {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    align-items: center;
+    margin-bottom: 0;
+  }
+  .row-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: #5f6368;
+    text-align: right;
+    padding-right: 16px;
+    align-self: start;
+    padding-top: 20px;
+  }
+  .row-inner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: nowrap;
+  }
+  .v-space {
+    height: 10px;
+    display: grid;
+    grid-template-columns: 110px 1fr;
+  }
+  .v-arrow-col {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  /* SECTION DIVIDERS */
+  .section-gap { height: 8px; }
+
+  /* BOTTOM NOTE */
+  .bottom-note {
+    text-align: center;
+    margin-top: 52px;
+    padding: 14px 24px;
+    background: #1a1d27;
+    border: 1px solid #3c4043;
+    border-radius: 8px;
+    max-width: 620px;
+    margin-left: auto;
+    margin-right: auto;
+    font-size: 12px;
+    color: #9aa0a6;
+    line-height: 1.6;
+  }
+  .bottom-note strong { color: #e8eaed; }
+
+  /* LEGEND */
+  .legend {
+    display: flex;
+    gap: 24px;
+    justify-content: center;
+    margin-bottom: 36px;
+    flex-wrap: wrap;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #9aa0a6;
+  }
+  .legend-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 2px solid;
+  }
+
+  /* PIPELINE STRIP — the main visual */
+  .pipeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    align-items: stretch;
+  }
+
+  .pipeline-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    padding: 0 0 0 126px;
+    position: relative;
+  }
+  .pipeline-row .row-label-abs {
+    position: absolute;
+    left: 0;
+    width: 110px;
+    text-align: right;
+    padding-right: 16px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: #5f6368;
+  }
+
+  .between-rows {
+    display: flex;
+    align-items: center;
+    padding-left: 126px;
+    height: 40px;
+  }
+
+  /* For complex rows with sub-items */
+  .group-box {
+    border: 1.5px dashed #3c4043;
+    border-radius: 10px;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+  }
+  .group-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #5f6368;
+    align-self: flex-start;
+  }
+
+  /* Two-column table layout for Silver/Gold */
+  .tables-pair {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  .tables-col {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .tables-col-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #5f6368;
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+
+  .pipe-arrow {
+    display: flex;
+    align-items: center;
+    padding: 0 4px;
+    flex-shrink: 0;
+  }
+
+  /* Agent box special */
+  .agent-box {
+    background: #3a1515;
+    border: 2px solid #EA4335;
+    border-radius: 10px;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    min-width: 200px;
+  }
+  .agent-box-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #f1948a;
+  }
+  .agent-box-sub {
+    font-size: 11px;
+    color: #f5b7b1;
+    opacity: 0.8;
+  }
+
+  .api-box {
+    background: #3b3000;
+    border: 2px solid #FBBC04;
+    border-radius: 10px;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    min-width: 180px;
+  }
+  .api-box-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #fcd34d;
+  }
+  .api-box-sub {
+    font-size: 11px;
+    color: #fde68a;
+    opacity: 0.8;
+  }
+
+  .ui-box {
+    background: #3b3000;
+    border: 2px solid #FBBC04;
+    border-radius: 10px;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    min-width: 180px;
+  }
+  .ui-box-title { font-size: 13px; font-weight: 700; color: #fcd34d; }
+
+  .ui-chip {
+    background: #2e2500;
+    border: 1.5px solid #d97706;
+    border-radius: 20px;
+    padding: 4px 10px;
+    font-size: 10.5px;
+    color: #fde68a;
+    white-space: nowrap;
+  }
+
+  .source-box {
+    background: #1a2d5a;
+    border: 2px solid #4285F4;
+    border-radius: 10px;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    min-width: 160px;
+  }
+  .source-box-title { font-size: 13px; font-weight: 700; color: #7badf8; }
+  .source-box-sub { font-size: 11px; color: #a8c4f8; opacity: 0.85; }
+
+  .fivetran-box {
+    background: #152e1f;
+    border: 2px solid #34A853;
+    border-radius: 10px;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    min-width: 160px;
+  }
+  .fivetran-box-title { font-size: 13px; font-weight: 700; color: #6fcf97; }
+  .fivetran-box-sub { font-size: 11px; color: #a8d5b5; opacity: 0.85; }
+
+  .gemini-badge {
+    background: #1a0a3a;
+    border: 1.5px solid #9b59b6;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 10px;
+    color: #d7bde2;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+
+<h1>Scout WC26 — System Architecture</h1>
+<p class="subtitle">Gemini-powered AI scouting agent · Fivetran MCP + BigQuery + Google Cloud Run</p>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="border-color:#4285F4;background:#1a2d5a"></div> Data Sources</div>
+  <div class="legend-item"><div class="legend-dot" style="border-color:#34A853;background:#152e1f"></div> BigQuery / Ingestion</div>
+  <div class="legend-item"><div class="legend-dot" style="border-color:#EA4335;background:#3a1515"></div> Agent / Gemini</div>
+  <div class="legend-item"><div class="legend-dot" style="border-color:#FBBC04;background:#3b3000"></div> API &amp; UI</div>
+</div>
+
+<div class="diagram-wrapper">
+<div class="pipeline">
+
+  <!-- ROW 1: Data Source -->
+  <div class="pipeline-row" style="justify-content:flex-start; min-height:80px; align-items:center;">
+    <span class="row-label-abs" style="top:50%;transform:translateY(-50%)">Data<br>Source</span>
+    <div class="source-box">
+      <div style="font-size:24px">⚽</div>
+      <div class="source-box-title">API-Football</div>
+      <div class="source-box-sub">RapidAPI · Free tier<br>100 req/day · rate-limited</div>
+    </div>
+  </div>
+
+  <!-- Arrow down -->
+  <div class="between-rows">
+    <svg width="24" height="40" viewBox="0 0 24 40">
+      <line x1="12" y1="0" x2="12" y2="32" stroke="#666" stroke-width="2"/>
+      <polygon points="6,28 18,28 12,40" fill="#666"/>
+    </svg>
+  </div>
+
+  <!-- ROW 2: Ingestion -->
+  <div class="pipeline-row" style="min-height:90px; align-items:center; gap:10px;">
+    <span class="row-label-abs" style="top:50%;transform:translateY(-50%)">Ingestion</span>
+    <div class="fivetran-box">
+      <div style="font-size:22px">🔗</div>
+      <div class="fivetran-box-title">Fivetran Connector SDK</div>
+      <div class="fivetran-box-sub">MCP Server trigger<br>trigger_sync() + poll()</div>
+    </div>
+    <!-- h arrow -->
+    <div class="pipe-arrow">
+      <svg width="48" height="24" viewBox="0 0 48 24">
+        <line x1="0" y1="12" x2="38" y2="12" stroke="#666" stroke-width="2"/>
+        <polygon points="34,6 46,12 34,18" fill="#666"/>
+      </svg>
+    </div>
+    <!-- Bronze tables -->
+    <div class="group-box" style="flex:1;">
+      <div class="group-label">BigQuery — Bronze Layer (raw, append-only)</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
+        <div class="table-item bq-table">bronze_fixtures</div>
+        <div class="table-item bq-table">bronze_team_squads</div>
+        <div class="table-item bq-table">bronze_players</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow down -->
+  <div class="between-rows">
+    <svg width="24" height="40" viewBox="0 0 24 40">
+      <line x1="12" y1="0" x2="12" y2="32" stroke="#666" stroke-width="2"/>
+      <polygon points="6,28 18,28 12,40" fill="#666"/>
+    </svg>
+  </div>
+
+  <!-- ROW 3: Transform -->
+  <div class="pipeline-row" style="min-height:110px; align-items:center; gap:10px;">
+    <span class="row-label-abs" style="top:50%;transform:translateY(-50%)">Transform</span>
+    <!-- Bronze bubble -->
+    <div class="fivetran-box" style="min-width:130px;">
+      <div style="font-size:18px">⚙️</div>
+      <div class="fivetran-box-title" style="font-size:12px;">pipeline/transform.py</div>
+      <div class="fivetran-box-sub">Bronze → Silver → Gold<br>SQL + Pandas</div>
+    </div>
+    <!-- arrow -->
+    <div class="pipe-arrow">
+      <svg width="48" height="24" viewBox="0 0 48 24">
+        <line x1="0" y1="12" x2="38" y2="12" stroke="#666" stroke-width="2"/>
+        <polygon points="34,6 46,12 34,18" fill="#666"/>
+      </svg>
+    </div>
+    <!-- Silver + Gold columns -->
+    <div class="group-box" style="flex:1;">
+      <div class="group-label">BigQuery — Silver &amp; Gold Layers</div>
+      <div class="tables-pair">
+        <div class="tables-col">
+          <div class="tables-col-label">Silver (cleaned)</div>
+          <div class="table-item bq-table">silver_fixtures</div>
+          <div class="table-item bq-table">silver_players</div>
+        </div>
+        <div style="display:flex;align-items:center;padding:0 6px;">
+          <svg width="36" height="24" viewBox="0 0 36 24">
+            <line x1="0" y1="12" x2="26" y2="12" stroke="#666" stroke-width="2"/>
+            <polygon points="22,6 34,12 22,18" fill="#666"/>
+          </svg>
+        </div>
+        <div class="tables-col">
+          <div class="tables-col-label">Gold (aggregated)</div>
+          <div class="table-item bq-table">gold_player_stats</div>
+          <div class="table-item bq-table">gold_team_summary</div>
+          <div class="table-item bq-table">gold_match_results</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Arrow down -->
+  <div class="between-rows">
+    <svg width="24" height="40" viewBox="0 0 24 40">
+      <line x1="12" y1="0" x2="12" y2="32" stroke="#666" stroke-width="2"/>
+      <polygon points="6,28 18,28 12,40" fill="#666"/>
+    </svg>
+  </div>
+
+  <!-- ROW 4: Agent Layer -->
+  <div class="pipeline-row" style="min-height:140px; align-items:flex-start; gap:14px; padding-top:10px;">
+    <span class="row-label-abs" style="top:20px;">Agent<br>Layer</span>
+
+    <div class="agent-box">
+      <div style="font-size:24px">🤖</div>
+      <div class="agent-box-title">Google ADK Agent</div>
+      <div class="agent-box-sub">scout_adk/ · InMemoryRunner</div>
+      <div class="gemini-badge">gemini-2.5-flash</div>
+      <div style="margin-top:4px;">
+        <div class="agent-box" style="background:#2d0a0a;border-color:#c0392b;padding:10px 14px;gap:6px;min-width:170px;">
+          <div class="agent-box-title" style="font-size:11px;color:#f1948a;">scout_agent.py (CLI)</div>
+          <div class="agent-box-sub" style="font-size:10px;">Direct google-genai SDK</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- arrow right -->
+    <div class="pipe-arrow" style="padding-top:30px;">
+      <svg width="48" height="24" viewBox="0 0 48 24">
+        <line x1="0" y1="12" x2="38" y2="12" stroke="#666" stroke-width="2"/>
+        <polygon points="34,6 46,12 34,18" fill="#666"/>
+      </svg>
+    </div>
+
+    <!-- Tools panel -->
+    <div class="group-box" style="flex:1;">
+      <div class="group-label">src/agent/tools.py — 7 Agent Tools</div>
+      <div class="tools-grid">
+        <div class="tool-chip">query_players</div>
+        <div class="tool-chip">query_team_summary</div>
+        <div class="tool-chip">get_player_detail</div>
+        <div class="tool-chip">get_top_players_by_position</div>
+        <div class="tool-chip">get_team_roster</div>
+        <div class="tool-chip">get_league_overview</div>
+        <div class="tool-chip">refresh_scouting_data</div>
+      </div>
+      <div style="margin-top:6px;font-size:10px;color:#5f6368;">All tools read from Gold tables via bq_client.py wrapper</div>
+    </div>
+  </div>
+
+  <!-- Arrow down -->
+  <div class="between-rows">
+    <svg width="24" height="40" viewBox="0 0 24 40">
+      <line x1="12" y1="0" x2="12" y2="32" stroke="#666" stroke-width="2"/>
+      <polygon points="6,28 18,28 12,40" fill="#666"/>
+    </svg>
+  </div>
+
+  <!-- ROW 5: API & UI -->
+  <div class="pipeline-row" style="min-height:110px; align-items:flex-start; gap:10px; padding-top:8px;">
+    <span class="row-label-abs" style="top:18px;">API &amp; UI</span>
+
+    <div class="api-box">
+      <div style="font-size:22px">🚀</div>
+      <div class="api-box-title">FastAPI on Cloud Run</div>
+      <div class="api-box-sub">src/api/main.py</div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px;justify-content:center;margin-top:4px;">
+        <div class="ui-chip">POST /query</div>
+        <div class="ui-chip">POST /adk/query</div>
+        <div class="ui-chip">POST /report/pdf/{name}</div>
+        <div class="ui-chip">GET /teams · /players</div>
+        <div class="ui-chip">POST /refresh</div>
+      </div>
+    </div>
+
+    <!-- arrow -->
+    <div class="pipe-arrow" style="padding-top:22px;">
+      <svg width="48" height="24" viewBox="0 0 48 24">
+        <line x1="0" y1="12" x2="38" y2="12" stroke="#666" stroke-width="2"/>
+        <polygon points="34,6 46,12 34,18" fill="#666"/>
+      </svg>
+    </div>
+
+    <div class="group-box" style="flex:1;">
+      <div class="group-label">Client Interfaces</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;justify-content:center;">
+        <div class="ui-box" style="min-width:150px;">
+          <div style="font-size:20px">🖥️</div>
+          <div class="ui-box-title">Demo UI</div>
+          <div style="font-size:11px;color:#fde68a;opacity:0.8;">docs/demo.html<br>served at GET /</div>
+        </div>
+        <div class="ui-box" style="min-width:150px;">
+          <div style="font-size:20px">📊</div>
+          <div class="ui-box-title">Charts &amp; Analytics</div>
+          <div style="font-size:11px;color:#fde68a;opacity:0.8;">Squad age · Top teams<br>Team depth · AI-generate</div>
+        </div>
+        <div class="ui-box" style="min-width:150px;">
+          <div style="font-size:20px">📄</div>
+          <div class="ui-box-title">PDF Reports</div>
+          <div style="font-size:11px;color:#fde68a;opacity:0.8;">reportlab · Gemini<br>Player scouting reports</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /pipeline -->
+
+<!-- Cloud Run badge -->
+<div style="text-align:center;margin-top:28px;">
+  <span style="background:#1a2d5a;border:1.5px solid #4285F4;border-radius:6px;padding:6px 16px;font-size:11px;color:#a8c4f8;">
+    ☁️ Deployed · <strong style="color:#7badf8;">Google Cloud Run</strong> · us-central1 · python:3.14-slim · ADC auth (no JSON keys)
+  </span>
+</div>
+
+</div><!-- /diagram-wrapper -->
+
+<div class="bottom-note">
+  <strong>To export:</strong> Open this file in Chrome → File → Print → Save as PDF (set to Landscape, no margins).<br>
+  Or right-click → Screenshot the diagram area and save as <code>docs/architecture.png</code>.
+</div>
+
+</body>
+</html>
