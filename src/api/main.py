@@ -225,13 +225,15 @@ def chart_ai_generate(body: ChartRequest) -> dict:
 
 @app.post("/report/pdf/{player_name}")
 def report_pdf(player_name: str) -> Response:
+    from datetime import date
     from io import BytesIO
 
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import letter
-    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import inch
     from reportlab.platypus import (
+        HRFlowable,
         Paragraph,
         SimpleDocTemplate,
         Spacer,
@@ -253,130 +255,183 @@ def report_pdf(player_name: str) -> Response:
     _draws = team.get("draws", 0) if team else 0
     _losses = team.get("losses", 0) if team else 0
     _points = team.get("points", 0) if team else 0
+    _matches = team.get("matches_played", 0) if team else 0
+    _pname = player.get("name", player_name)
+    _age = player.get("age", "unknown")
+    _position = player.get("position", "unknown")
+    _nationality = player.get("nationality", "unknown")
+
     scouting_para = scout_agent.run_query(
-        f"You are a professional football scout writing a scouting report. "
-        f"Write a 3-4 sentence scouting assessment for {player.get('name', player_name)}, "
-        f"aged {player.get('age', 'unknown')}, who plays {player.get('position', 'unknown')} "
-        f"for {player.get('team_name', 'unknown')} (nationality: {player.get('nationality', 'unknown')}). "
-        f"Their team has {_wins} wins, {_draws} draws, {_losses} losses and {_points} points. "
-        f"\n\nWrite specifically about: their likely playing style for their position and age, "
-        f"their value to the national team given the team's record, and one specific recommendation "
-        f"(e.g. worth monitoring, strong prospect, established starter). "
-        f"\n\nWrite in the style of a professional scout report. Be specific and direct. "
-        f"Do not say you cannot assess players or that you lack domain expertise — just write the assessment."
+        f"You are a UEFA-licensed football scout. Write a professional 4-5 sentence scouting report for "
+        f"{_pname}, {_age} years old, {_position} for {team_name} ({_nationality}).\n\n"
+        f"Cover these points in order:\n"
+        f"1. Playing style typical for their position and age\n"
+        f"2. Their role in the team given {team_name}'s record of {_wins}W {_draws}D {_losses}L\n"
+        f"3. Key strengths based on their profile\n"
+        f"4. Transfer/recruitment recommendation with a specific tier "
+        f"(e.g. 'top 5 league ready', 'strong Championship/second division level', 'promising development prospect')\n\n"
+        f"Write 4-5 sentences. Be specific and professional. "
+        f"Do not refuse or hedge. Do not say you lack data."
     )
 
     buffer = BytesIO()
+    PAGE_W = letter[0]
+    MARGIN = 0.75 * inch
+    usable_w = PAGE_W - 2 * MARGIN
+
     doc = SimpleDocTemplate(
         buffer,
         pagesize=letter,
-        leftMargin=0.75 * inch,
-        rightMargin=0.75 * inch,
-        topMargin=0.75 * inch,
-        bottomMargin=0.75 * inch,
+        leftMargin=MARGIN,
+        rightMargin=MARGIN,
+        topMargin=MARGIN,
+        bottomMargin=MARGIN,
     )
 
-    styles = getSampleStyleSheet()
-    BLUE = colors.HexColor("#1f6feb")
+    DARK = colors.HexColor("#1a1a2e")
+    BLUE = colors.HexColor("#4285F4")
     MUTED = colors.HexColor("#586069")
-    LIGHT = colors.HexColor("#f6f8fa")
+    LIGHT = colors.HexColor("#f0f2f5")
     BORDER = colors.HexColor("#e1e4e8")
+    WHITE = colors.white
 
     def _style(name, **kw):
         return ParagraphStyle(name, **kw)
 
-    header_style = _style("hdr", fontName="Helvetica-Bold", fontSize=13, textColor=BLUE, spaceAfter=2)
-    name_style = _style("nm", fontName="Helvetica-Bold", fontSize=22, spaceAfter=14)
-    section_style = _style("sec", fontName="Helvetica-Bold", fontSize=12, textColor=BLUE, spaceBefore=14, spaceAfter=6)
+    hdr_left_style = _style("hl", fontName="Helvetica-Bold", fontSize=11, textColor=WHITE)
+    hdr_right_style = _style("hr2", fontName="Helvetica", fontSize=9, textColor=WHITE, alignment=2)
+    name_style = _style("nm", fontName="Helvetica-Bold", fontSize=24, spaceAfter=4, textColor=colors.black)
+    subtitle_style = _style("sub", fontName="Helvetica", fontSize=14, textColor=MUTED, spaceAfter=10)
+    section_style = _style("sec", fontName="Helvetica-Bold", fontSize=11, textColor=colors.black, spaceBefore=14, spaceAfter=4)
     body_style = _style("bd", fontName="Helvetica", fontSize=11, leading=16, spaceAfter=4)
-    label_style = _style("lbl", fontName="Helvetica-Bold", fontSize=10, textColor=MUTED, spaceAfter=2)
-    footer_style = _style("ftr", fontName="Helvetica-Oblique", fontSize=9, textColor=MUTED, alignment=1)
+    assess_style = _style("assess", fontName="Helvetica", fontSize=11, leading=17, leftIndent=4, rightIndent=4)
+    footer_white_style = _style("fw", fontName="Helvetica", fontSize=9, textColor=WHITE, alignment=1)
 
     story = []
 
-    story.append(Paragraph("Scout WC26 — Player Scouting Report", header_style))
-    story.append(Spacer(1, 0.08 * inch))
-    story.append(Paragraph(player.get("name", player_name), name_style))
+    # Dark header bar: "SCOUT WC26" left, date right
+    today_str = date.today().strftime("%d %b %Y")
+    hdr_data = [[Paragraph("SCOUT WC26", hdr_left_style), Paragraph(today_str, hdr_right_style)]]
+    hdr_tbl = Table(hdr_data, colWidths=[usable_w * 0.6, usable_w * 0.4])
+    hdr_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), DARK),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("LEFTPADDING", (0, 0), (0, -1), 12),
+        ("RIGHTPADDING", (-1, 0), (-1, -1), 12),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.append(hdr_tbl)
+    story.append(Spacer(1, 0.18 * inch))
 
-    info_data = [
-        ["Position", player.get("position", "—")],
-        ["Age", str(player.get("age", "—"))],
-        ["Nationality", player.get("nationality", "—")],
-        ["Team", player.get("team_name", "—")],
-        ["Jersey #", str(player.get("jersey_number", "—"))],
+    # Player name (24pt bold) + position · team subtitle (14pt gray)
+    story.append(Paragraph(_pname, name_style))
+    story.append(Paragraph(f"{_position} · {team_name}", subtitle_style))
+
+    # Horizontal rule in blue
+    story.append(HRFlowable(width="100%", thickness=2, color=BLUE, spaceAfter=10))
+
+    # Key stats in 2-column layout (4 table columns: label, value, label, value)
+    cw = usable_w / 4
+    stats_data = [
+        ["POSITION", player.get("position", "—"), "TEAM", team_name or "—"],
+        ["AGE", str(player.get("age", "—")), "MATCHES", str(_matches)],
+        ["NATIONALITY", player.get("nationality", "—"), "W / D / L", f"{_wins} / {_draws} / {_losses}"],
+        ["JERSEY #", str(player.get("jersey_number", "—")), "POINTS", str(_points)],
     ]
-    info_tbl = Table(info_data, colWidths=[1.4 * inch, 4.5 * inch])
-    info_tbl.setStyle(
-        TableStyle([
-            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-            ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
-            ("FONTSIZE", (0, 0), (-1, -1), 11),
-            ("TEXTCOLOR", (0, 0), (0, -1), BLUE),
-            ("ROWBACKGROUNDS", (0, 0), (-1, -1), [LIGHT, colors.white]),
-            ("GRID", (0, 0), (-1, -1), 0.5, BORDER),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ])
-    )
-    story.append(info_tbl)
+    stats_tbl = Table(stats_data, colWidths=[cw * 0.75, cw * 1.25, cw * 0.75, cw * 1.25])
+    stats_tbl.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
+        ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+        ("FONTNAME", (3, 0), (3, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("TEXTCOLOR", (0, 0), (0, -1), MUTED),
+        ("TEXTCOLOR", (2, 0), (2, -1), MUTED),
+        ("ROWBACKGROUNDS", (0, 0), (-1, -1), [LIGHT, WHITE]),
+        ("GRID", (0, 0), (-1, -1), 0.5, BORDER),
+        ("LINEAFTER", (1, 0), (1, -1), 1.5, BORDER),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.append(stats_tbl)
+    story.append(Spacer(1, 0.15 * inch))
 
-    story.append(Paragraph("Team Performance", section_style))
-    if team:
-        perf_data = [
-            ["W", "D", "L", "GF", "GA", "Pts"],
-            [
-                str(team.get("wins", "—")),
-                str(team.get("draws", "—")),
-                str(team.get("losses", "—")),
-                str(team.get("goals_for", "—")),
-                str(team.get("goals_against", "—")),
-                str(team.get("points", "—")),
-            ],
-        ]
-        perf_tbl = Table(perf_data, colWidths=[0.9 * inch] * 6)
-        perf_tbl.setStyle(
-            TableStyle([
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-                ("FONTSIZE", (0, 0), (-1, -1), 11),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("BACKGROUND", (0, 0), (-1, 0), BLUE),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("BACKGROUND", (0, 1), (-1, -1), LIGHT),
-                ("GRID", (0, 0), (-1, -1), 0.5, BORDER),
-                ("TOPPADDING", (0, 0), (-1, -1), 6),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ])
-        )
-        story.append(perf_tbl)
-    else:
-        story.append(Paragraph("No team data available.", body_style))
+    # Squad roster in 3 columns: GK | DEF/MID | FWD
+    story.append(Paragraph("SQUAD ROSTER", section_style))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=BLUE, spaceAfter=8))
 
-    story.append(Paragraph("Squad Roster", section_style))
     if roster:
         pos_groups: dict[str, list[str]] = {}
         for p in roster:
             pos = p.get("position", "UNKNOWN")
             pos_groups.setdefault(pos, []).append(p.get("name", ""))
-        for pos in ["GK", "DEF", "MID", "FWD", "UNKNOWN"]:
-            names = pos_groups.get(pos)
-            if names:
-                story.append(Paragraph(pos, label_style))
-                story.append(Paragraph(", ".join(names), body_style))
+        gk = pos_groups.get("GK", [])
+        mid_def = pos_groups.get("DEF", []) + pos_groups.get("MID", [])
+        fwd = pos_groups.get("FWD", [])
+        max_rows = max(len(gk), len(mid_def), len(fwd), 1)
+        roster_data = [["GK", "DEF / MID", "FWD"]]
+        for i in range(max_rows):
+            roster_data.append([
+                gk[i] if i < len(gk) else "",
+                mid_def[i] if i < len(mid_def) else "",
+                fwd[i] if i < len(fwd) else "",
+            ])
+        cw3 = usable_w / 3
+        roster_tbl = Table(roster_data, colWidths=[cw3] * 3)
+        roster_tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), DARK),
+            ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 10),
+            ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 1), (-1, -1), 9),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [LIGHT, WHITE]),
+            ("GRID", (0, 0), (-1, -1), 0.5, BORDER),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        story.append(roster_tbl)
     else:
         story.append(Paragraph("No roster data available.", body_style))
 
-    story.append(Paragraph("Scouting Assessment", section_style))
-    story.append(Paragraph(scouting_para or "No assessment available.", body_style))
+    story.append(Spacer(1, 0.15 * inch))
 
-    story.append(Spacer(1, 0.4 * inch))
-    story.append(Paragraph("Generated by Scout WC26 | Powered by Gemini + BigQuery", footer_style))
+    # Scouting assessment in indented box with light gray background
+    story.append(Paragraph("SCOUTING ASSESSMENT", section_style))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=BLUE, spaceAfter=8))
+
+    assess_data = [[Paragraph(scouting_para or "No assessment available.", assess_style)]]
+    assess_tbl = Table(assess_data, colWidths=[usable_w])
+    assess_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), LIGHT),
+        ("BOX", (0, 0), (-1, -1), 0.5, BORDER),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+    ]))
+    story.append(assess_tbl)
+    story.append(Spacer(1, 0.3 * inch))
+
+    # Footer bar matching header color
+    footer_data = [[Paragraph("Generated by Scout WC26 | Powered by Gemini + BigQuery", footer_white_style)]]
+    footer_tbl = Table(footer_data, colWidths=[usable_w])
+    footer_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), DARK),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+    ]))
+    story.append(footer_tbl)
 
     doc.build(story)
     buffer.seek(0)
 
-    safe_name = player.get("name", player_name).replace(" ", "_")
+    safe_name = _pname.replace(" ", "_")
     return Response(
         content=buffer.read(),
         media_type="application/pdf",
