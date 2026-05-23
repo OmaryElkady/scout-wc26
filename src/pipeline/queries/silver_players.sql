@@ -4,22 +4,43 @@ SELECT
   team_id,
   team_name,
   name,
-  CASE
-    WHEN UPPER(position) IN ('GOALKEEPER', 'GK') THEN 'GK'
-    WHEN UPPER(position) IN (
-      'DEFENDER', 'DEF', 'CENTRE-BACK', 'CENTER-BACK',
-      'LEFT BACK', 'RIGHT BACK', 'CB', 'LB', 'RB',
-      'LEFT WING-BACK', 'RIGHT WING-BACK'
-    ) THEN 'DEF'
-    WHEN UPPER(position) IN (
-      'MIDFIELDER', 'MID', 'CENTRAL MIDFIELD', 'LEFT MIDFIELD',
-      'RIGHT MIDFIELD', 'ATTACKING MIDFIELD', 'DEFENSIVE MIDFIELD',
-      'CM', 'CAM', 'CDM', 'LM', 'RM'
-    ) THEN 'MID'
-    WHEN UPPER(position) IN (
-      'FORWARD', 'FWD', 'ATTACKER', 'CENTRE-FORWARD', 'CENTER-FORWARD',
-      'LEFT WING', 'RIGHT WING', 'STRIKER', 'ST', 'LW', 'RW', 'CF'
-    ) THEN 'FWD'
+  -- The API returns abbreviations, often as comma-separated multi-role strings
+  -- (e.g. "CDM,CM" or "CB,LB"). Extract the first (primary) token and map it.
+  CASE TRIM(SPLIT(UPPER(COALESCE(position, '')), ',')[SAFE_OFFSET(0)])
+    -- Goalkeeper
+    WHEN 'GK'          THEN 'GK'
+    WHEN 'GOALKEEPER'  THEN 'GK'
+    -- Defenders
+    WHEN 'CB'          THEN 'DEF'
+    WHEN 'RB'          THEN 'DEF'
+    WHEN 'LB'          THEN 'DEF'
+    WHEN 'RWB'         THEN 'DEF'
+    WHEN 'LWB'         THEN 'DEF'
+    WHEN 'DEF'         THEN 'DEF'
+    WHEN 'DEFENDER'    THEN 'DEF'
+    WHEN 'CENTRE-BACK' THEN 'DEF'
+    WHEN 'CENTER-BACK' THEN 'DEF'
+    -- Midfielders
+    WHEN 'CM'          THEN 'MID'
+    WHEN 'CDM'         THEN 'MID'
+    WHEN 'CAM'         THEN 'MID'
+    WHEN 'LM'          THEN 'MID'
+    WHEN 'RM'          THEN 'MID'
+    WHEN 'DM'          THEN 'MID'
+    WHEN 'AM'          THEN 'MID'
+    WHEN 'MID'         THEN 'MID'
+    WHEN 'MIDFIELDER'  THEN 'MID'
+    -- Forwards
+    WHEN 'ST'          THEN 'FWD'
+    WHEN 'LW'          THEN 'FWD'
+    WHEN 'RW'          THEN 'FWD'
+    WHEN 'CF'          THEN 'FWD'
+    WHEN 'SS'          THEN 'FWD'
+    WHEN 'FW'          THEN 'FWD'
+    WHEN 'FWD'         THEN 'FWD'
+    WHEN 'FORWARD'     THEN 'FWD'
+    WHEN 'ATTACKER'    THEN 'FWD'
+    WHEN 'STRIKER'     THEN 'FWD'
     ELSE 'UNKNOWN'
   END AS position,
   nationality,
