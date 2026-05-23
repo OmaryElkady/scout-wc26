@@ -355,9 +355,71 @@
       padding: 10px 14px;
     }
     .chart-info-box.visible { display: block; }
+
+    /* ── Live / Upcoming Ticker ── */
+    .ticker-banner {
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      overflow: hidden;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .ticker-track {
+      display: inline-flex;
+      align-items: center;
+      white-space: nowrap;
+      animation: ticker-scroll 60s linear infinite;
+      will-change: transform;
+    }
+    .ticker-banner:hover .ticker-track { animation-play-state: paused; }
+    @keyframes ticker-scroll {
+      0%   { transform: translateX(0); }
+      100% { transform: translateX(-50%); }
+    }
+    .ticker-card {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 18px;
+      flex-shrink: 0;
+    }
+    .ticker-sep {
+      width: 1px;
+      height: 18px;
+      background: var(--border);
+      flex-shrink: 0;
+    }
+    .ticker-badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      letter-spacing: 0.4px;
+      flex-shrink: 0;
+    }
+    .ticker-badge.live     { background: rgba(248,81,73,.15); color: var(--red);     border: 1px solid rgba(248,81,73,.3);  }
+    .ticker-badge.upcoming { background: rgba(88,166,255,.1);  color: var(--primary); border: 1px solid rgba(88,166,255,.25); }
+    .ticker-match          { font-size: 13px; color: var(--text); }
+    .ticker-match strong   { color: #fff; }
+    .ticker-time           { font-size: 12px; color: var(--muted); }
+    .ticker-countdown .ticker-match         { color: var(--yellow); }
+    .ticker-countdown .ticker-match strong  { color: #fff; }
   </style>
 </head>
 <body>
+
+<!-- ── Live / Upcoming Ticker ── -->
+<div class="ticker-banner" id="ticker-banner">
+  <div class="ticker-track" id="ticker-track">
+    <div class="ticker-card">
+      <span class="ticker-match" style="color:var(--muted)">Loading match data…</span>
+    </div>
+  </div>
+</div>
 
 <header>
   <div class="logo">⚽</div>
@@ -955,7 +1017,99 @@
     }
   }
 
+  // ── Ticker Banner ──────────────────────────────────────────────────────────
+
+  function _fmtMatchDate(dateStr, timeStr) {
+    if (!dateStr) return timeStr || '';
+    try {
+      const d = new Date(dateStr);
+      const label = d.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
+      return timeStr ? `${label} · ${timeStr}` : label;
+    } catch { return (dateStr + (timeStr ? ' ' + timeStr : '')).trim(); }
+  }
+
+  function _renderTicker(live, upcoming) {
+    const track = document.getElementById('ticker-track');
+    if (!track) return;
+
+    const items = [];
+
+    for (const m of live) {
+      const score = (m.home_score != null && m.away_score != null)
+        ? `<strong>${m.home_score}</strong>&thinsp;-&thinsp;<strong>${m.away_score}</strong>`
+        : 'vs';
+      items.push(
+        `<div class="ticker-card">` +
+          `<span class="ticker-badge live">🔴 LIVE</span>` +
+          `<span class="ticker-match">${m.home_team} ${score} ${m.away_team}</span>` +
+          (m.status ? `<span class="ticker-time">${m.status}</span>` : '') +
+        `</div><span class="ticker-sep"></span>`
+      );
+    }
+
+    const slice = live.length === 0 ? upcoming.slice(0, 5) : upcoming;
+    for (const m of slice) {
+      const when = _fmtMatchDate(m.match_date, m.match_time);
+      items.push(
+        `<div class="ticker-card">` +
+          `<span class="ticker-badge upcoming">📅 UPCOMING</span>` +
+          `<span class="ticker-match">${m.home_team} vs ${m.away_team}</span>` +
+          (when ? `<span class="ticker-time">${when}</span>` : '') +
+        `</div><span class="ticker-sep"></span>`
+      );
+    }
+
+    // Countdown card if before June 11, 2026
+    const WC = new Date('2026-06-11T00:00:00');
+    const now = new Date();
+    if (now < WC) {
+      const days = Math.ceil((WC - now) / 86400000);
+      items.push(
+        `<div class="ticker-card ticker-countdown">` +
+          `<span class="ticker-match">⏳ WORLD CUP 2026 STARTS IN <strong>${days}</strong> ${days === 1 ? 'DAY' : 'DAYS'}</span>` +
+        `</div><span class="ticker-sep"></span>`
+      );
+    }
+
+    if (items.length === 0) {
+      track.innerHTML = `<div class="ticker-card"><span class="ticker-match" style="color:var(--muted)">No upcoming matches</span></div>`;
+      track.style.animation = 'none';
+      return;
+    }
+
+    const html = items.join('');
+    track.innerHTML = html + html; // duplicate for seamless loop
+    track.style.animationDuration = `${Math.max(20, items.length * 7)}s`;
+  }
+
+  async function loadTicker() {
+    try {
+      const res = await fetch(`${API}/matches/live-upcoming`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const { live, upcoming } = await res.json();
+      _renderTicker(live || [], upcoming || []);
+    } catch {
+      const track = document.getElementById('ticker-track');
+      if (!track) return;
+      const WC = new Date('2026-06-11T00:00:00');
+      if (new Date() < WC) {
+        const days = Math.ceil((WC - new Date()) / 86400000);
+        track.innerHTML =
+          `<div class="ticker-card ticker-countdown">` +
+            `<span class="ticker-match">⏳ WORLD CUP 2026 STARTS IN <strong>${days}</strong> DAYS</span>` +
+          `</div>`;
+        track.style.animation = 'none';
+      } else {
+        track.innerHTML = `<div class="ticker-card"><span class="ticker-match" style="color:var(--muted)">No upcoming matches</span></div>`;
+        track.style.animation = 'none';
+      }
+    }
+  }
+
+  setInterval(loadTicker, 60_000);
+
   // ── Boot ──────────────────────────────────────────────────────────────────
+  loadTicker();
   loadTeams();
   loadCharts();
   loadDepthChart("England");
