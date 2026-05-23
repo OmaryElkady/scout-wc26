@@ -24,5 +24,5 @@ def test_root_agent_has_five_tools():
 
 
 def test_root_agent_tool_names_match_expected():
-    registered = {t.name for t in root_agent.tools}
+    registered = {getattr(t, "name", getattr(t, "__name__", None)) for t in root_agent.tools}
     assert registered == _EXPECTED_TOOLS
