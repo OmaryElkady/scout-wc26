@@ -27,6 +27,28 @@ def _esc(s: str) -> str:
     return s.replace("'", "''")
 
 
+def _normalize_match(m: dict, *, is_live: bool) -> dict:
+    home = m.get("home") or {}
+    away = m.get("away") or {}
+    score_obj = m.get("score") if isinstance(m.get("score"), dict) else {}
+    home_name = home.get("name") or m.get("homeTeam") or m.get("home_team") or ""
+    away_name = away.get("name") or m.get("awayTeam") or m.get("away_team") or ""
+    home_score = home.get("score") if home.get("score") is not None else score_obj.get("home")
+    away_score = away.get("score") if away.get("score") is not None else score_obj.get("away")
+    status = m.get("status") or m.get("state") or ("LIVE" if is_live else "NS")
+    match_date = m.get("date") or m.get("matchDate") or m.get("startDate") or ""
+    match_time = m.get("time") or m.get("matchTime") or m.get("startTime") or ""
+    return {
+        "home_team": str(home_name),
+        "away_team": str(away_name),
+        "home_score": int(home_score) if home_score is not None else None,
+        "away_score": int(away_score) if away_score is not None else None,
+        "status": str(status),
+        "match_date": match_date or None,
+        "match_time": match_time or None,
+    }
+
+
 _MODEL = "gemini-2.5-flash"
 _DEMO_HTML = pathlib.Path(__file__).parent.parent.parent / "docs" / "demo.html"
 
@@ -221,6 +243,39 @@ def chart_ai_generate(body: ChartRequest) -> dict:
             data.append(0.0)
 
     return {"labels": labels, "data": data, "chart_type": chart_type, "title": title}
+
+
+@app.get("/matches/live-upcoming")
+def matches_live_upcoming() -> dict:
+    from datetime import date, timedelta
+
+    from src.utils.football_api import football_api
+
+    live: list[dict] = []
+    upcoming: list[dict] = []
+
+    try:
+        raw = football_api.get_live_matches()
+        for m in raw[:10]:
+            n = _normalize_match(m, is_live=True)
+            if n["home_team"] or n["away_team"]:
+                live.append(n)
+    except Exception as exc:
+        logger.warning("Live matches fetch failed: %s", exc)
+
+    today = date.today()
+    for delta in range(4):
+        d = today + timedelta(days=delta)
+        try:
+            raw = football_api.get_matches_by_date(d.strftime("%Y-%m-%d"))
+            for m in raw:
+                n = _normalize_match(m, is_live=False)
+                if n["home_team"] or n["away_team"]:
+                    upcoming.append(n)
+        except Exception as exc:
+            logger.warning("Upcoming matches fetch failed for %s: %s", d, exc)
+
+    return {"live": live[:5], "upcoming": upcoming[:10]}
 
 
 @app.post("/report/pdf/{player_name}")
