@@ -5,6 +5,7 @@ from src.agent.tools import (
     get_top_players_by_position,
     query_players,
     query_team_summary,
+    refresh_scouting_data,
 )
 from src.utils import config as config_module
 
@@ -251,3 +252,54 @@ def test_get_top_players_by_position_uses_config_table(monkeypatch):
         get_top_players_by_position("Forward")
         sql = mock_bq.run_query.call_args[0][0]
         assert "proj-test.ds_test.gold_player_stats" in sql
+
+
+# ---------------------------------------------------------------------------
+# refresh_scouting_data
+# ---------------------------------------------------------------------------
+
+_FIVETRAN_TRIGGER = "src.ingestion.fivetran_trigger"
+_PIPELINE_TRANSFORM = "src.pipeline.transform"
+
+
+def test_refresh_scouting_data_happy_path():
+    with (
+        patch(f"{_FIVETRAN_TRIGGER}.trigger_sync") as mock_trigger,
+        patch(f"{_FIVETRAN_TRIGGER}.poll_sync_status") as mock_poll,
+        patch(f"{_PIPELINE_TRANSFORM}.run_all") as mock_run,
+    ):
+        result = refresh_scouting_data()
+    mock_trigger.assert_called_once()
+    mock_poll.assert_called_once_with(timeout_seconds=120)
+    mock_run.assert_called_once()
+    assert result == {
+        "status": "complete",
+        "sync_triggered": True,
+        "pipeline_rerun": True,
+        "message": "Scouting data refreshed successfully",
+    }
+
+
+def test_refresh_scouting_data_sync_failure_returns_error():
+    with (
+        patch(f"{_FIVETRAN_TRIGGER}.trigger_sync", side_effect=RuntimeError("sync boom")),
+        patch(f"{_FIVETRAN_TRIGGER}.poll_sync_status"),
+        patch(f"{_PIPELINE_TRANSFORM}.run_all") as mock_run,
+    ):
+        result = refresh_scouting_data()
+    mock_run.assert_not_called()
+    assert result["status"] == "error"
+    assert result["step_failed"] == "sync"
+    assert "sync boom" in result["message"]
+
+
+def test_refresh_scouting_data_pipeline_failure_returns_error():
+    with (
+        patch(f"{_FIVETRAN_TRIGGER}.trigger_sync"),
+        patch(f"{_FIVETRAN_TRIGGER}.poll_sync_status"),
+        patch(f"{_PIPELINE_TRANSFORM}.run_all", side_effect=RuntimeError("pipeline boom")),
+    ):
+        result = refresh_scouting_data()
+    assert result["status"] == "error"
+    assert result["step_failed"] == "pipeline"
+    assert "pipeline boom" in result["message"]
