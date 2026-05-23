@@ -1,3 +1,3 @@
-from .adk_agent import Scout as agent
+from scout_adk.agent import root_agent
 
-__all__ = ["agent"]
+__all__ = ["root_agent"]
