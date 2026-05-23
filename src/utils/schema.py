@@ -121,6 +121,17 @@ _GOLD_SCHEMAS: dict[str, list[bigquery.SchemaField]] = {
         bigquery.SchemaField("goal_difference", "INTEGER"),
         bigquery.SchemaField("points",          "INTEGER"),
     ],
+    "gold_match_results": [
+        bigquery.SchemaField("fixture_id",      "STRING"),
+        bigquery.SchemaField("home_team_name",  "STRING"),
+        bigquery.SchemaField("away_team_name",  "STRING"),
+        bigquery.SchemaField("home_score",      "INTEGER"),
+        bigquery.SchemaField("away_score",      "INTEGER"),
+        bigquery.SchemaField("match_date",      "DATE"),
+        bigquery.SchemaField("winner",          "STRING"),
+        bigquery.SchemaField("goal_difference", "INTEGER"),
+        bigquery.SchemaField("total_goals",     "INTEGER"),
+    ],
 }
 # fmt: on
 
