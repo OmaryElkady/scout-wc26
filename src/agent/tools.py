@@ -246,3 +246,37 @@ def get_top_players_by_position(
     rows = bq.run_query(sql)
     logger.info("get_top_players_by_position: returned %d rows", len(rows))
     return rows
+
+
+def refresh_scouting_data() -> dict[str, Any]:
+    """
+    Triggers a full data refresh: syncs latest football data from the API via
+    Fivetran, then reruns the Bronze→Silver→Gold pipeline. Use this when the
+    user asks to update, refresh, or sync the scouting data. Returns a status
+    dict with steps completed.
+    """
+    from src.ingestion.fivetran_trigger import poll_sync_status, trigger_sync
+    from src.pipeline.transform import run_all
+
+    try:
+        logger.info("refresh_scouting_data: triggering Fivetran sync")
+        trigger_sync()
+        poll_sync_status(timeout_seconds=120)
+        logger.info("refresh_scouting_data: sync complete, running pipeline")
+    except Exception as exc:
+        logger.error("refresh_scouting_data: sync step failed: %s", exc)
+        return {"status": "error", "message": str(exc), "step_failed": "sync"}
+
+    try:
+        run_all()
+        logger.info("refresh_scouting_data: pipeline complete")
+    except Exception as exc:
+        logger.error("refresh_scouting_data: pipeline step failed: %s", exc)
+        return {"status": "error", "message": str(exc), "step_failed": "pipeline"}
+
+    return {
+        "status": "complete",
+        "sync_triggered": True,
+        "pipeline_rerun": True,
+        "message": "Scouting data refreshed successfully",
+    }
