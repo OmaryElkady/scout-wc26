@@ -50,6 +50,33 @@ def query(request: QueryRequest) -> QueryResponse:
     return QueryResponse(answer=answer, question=request.question)
 
 
+@app.post("/adk/query", response_model=QueryResponse)
+async def adk_query(request: QueryRequest) -> QueryResponse:
+    """Run the question through the Google ADK agent (Agent Builder integration)."""
+    from google.adk.runners import InMemoryRunner
+    from google.genai import types
+    from src.agent.adk_agent import Scout
+
+    logger.info("POST /adk/query: question=%r", request.question)
+
+    _APP = "scout"
+    runner = InMemoryRunner(agent=Scout, app_name=_APP)
+    session = runner.session_service.create_session(app_name=_APP, user_id="api")
+
+    final_text = ""
+    async for event in runner.run_async(
+        user_id="api",
+        session_id=session.id,
+        new_message=types.Content(
+            role="user", parts=[types.Part(text=request.question)]
+        ),
+    ):
+        if event.is_final_response() and event.content and event.content.parts:
+            final_text = "".join(p.text or "" for p in event.content.parts)
+
+    return QueryResponse(answer=final_text, question=request.question)
+
+
 @app.post("/report/{player_name}", response_model=ReportResponse)
 def report(player_name: str) -> ReportResponse:
     logger.info("POST /report/%s", player_name)
