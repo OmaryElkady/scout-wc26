@@ -1,8 +1,10 @@
 import logging
+import pathlib
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from src.agent import scout_agent
 from src.agent import tools as agent_tools
@@ -19,6 +21,7 @@ from src.utils.config import config
 logger = logging.getLogger(__name__)
 
 _MODEL = "gemini-2.5-flash"
+_DEMO_HTML = pathlib.Path(__file__).parent.parent.parent / "docs" / "demo.html"
 
 app = FastAPI(title="Scout WC26", description="AI scouting agent for the 2026 FIFA World Cup")
 
@@ -28,6 +31,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/")
+def root() -> FileResponse:
+    return FileResponse(_DEMO_HTML, media_type="text/html")
 
 
 @app.get("/health")
