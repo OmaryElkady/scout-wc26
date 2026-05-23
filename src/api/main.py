@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, Response
 from src.agent import scout_agent
 from src.agent import tools as agent_tools
 from src.api.models import (
+    ChartRequest,
     PlayerListResponse,
     QueryRequest,
     QueryResponse,
@@ -20,6 +21,11 @@ from src.utils.bq_client import bq
 from src.utils.config import config
 
 logger = logging.getLogger(__name__)
+
+
+def _esc(s: str) -> str:
+    return s.replace("'", "''")
+
 
 _MODEL = "gemini-2.5-flash"
 _DEMO_HTML = pathlib.Path(__file__).parent.parent.parent / "docs" / "demo.html"
@@ -78,18 +84,19 @@ async def adk_query(request: QueryRequest) -> QueryResponse:
     return QueryResponse(answer=final_text, question=request.question)
 
 
-@app.get("/charts/position-breakdown")
-def chart_position_breakdown() -> dict:
+@app.get("/charts/squad-age-profile")
+def chart_squad_age_profile() -> dict:
     sql = (
-        "SELECT position, COUNT(*) as cnt "
+        "SELECT team_name, ROUND(AVG(age), 1) as avg_age "
         "FROM `" + config.table("gold_player_stats") + "` "
-        "GROUP BY position ORDER BY position"
+        "WHERE age IS NOT NULL "
+        "GROUP BY team_name ORDER BY avg_age ASC LIMIT 10"
     )
     rows = bq.run_query(sql)
     return {
-        "labels": [r["position"] for r in rows],
-        "data": [r["cnt"] for r in rows],
-        "title": "Players by Position",
+        "labels": [r["team_name"] for r in rows],
+        "data": [float(r["avg_age"]) for r in rows],
+        "title": "Youngest Squads (Avg Age)",
     }
 
 
@@ -108,36 +115,92 @@ def chart_top_teams() -> dict:
     }
 
 
-@app.get("/charts/age-distribution")
-def chart_age_distribution() -> dict:
+@app.get("/charts/team-depth/{team_name}")
+def chart_team_depth(team_name: str) -> dict:
+    _POS_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3, "UNKNOWN": 4}
     sql = (
-        "SELECT age, COUNT(*) as cnt "
+        "SELECT position, COUNT(*) as cnt "
         "FROM `" + config.table("gold_player_stats") + "` "
-        "WHERE age IS NOT NULL "
-        "GROUP BY age ORDER BY age"
+        "WHERE LOWER(team_name) LIKE '%" + _esc(team_name.lower()) + "%' "
+        "GROUP BY position"
     )
     rows = bq.run_query(sql)
+    rows.sort(key=lambda r: _POS_ORDER.get(r.get("position", ""), 99))
     return {
-        "labels": [str(r["age"]) for r in rows],
+        "labels": [r["position"] for r in rows],
         "data": [r["cnt"] for r in rows],
-        "title": "Player Age Distribution",
+        "title": f"Position Depth — {team_name.title()}",
     }
 
 
-@app.get("/charts/nationality-breakdown")
-def chart_nationality_breakdown() -> dict:
-    sql = (
-        "SELECT nationality, COUNT(*) as cnt "
-        "FROM `" + config.table("gold_player_stats") + "` "
-        "WHERE nationality IS NOT NULL "
-        "GROUP BY nationality ORDER BY cnt DESC LIMIT 10"
+@app.post("/charts/ai-generate")
+def chart_ai_generate(body: ChartRequest) -> dict:
+    import json
+
+    import google.genai as genai
+    from google.genai import types
+
+    table_ps = config.table("gold_player_stats")
+    table_ts = config.table("gold_team_summary")
+
+    client = genai.Client(vertexai=True, project=config.PROJECT_ID, location=config.REGION)
+
+    plan_prompt = (
+        f'You are a data visualization expert building charts from BigQuery.\n\n'
+        f'User wants to see: "{body.request}"\n\n'
+        f"Available BigQuery tables:\n"
+        f"- `{table_ps}` (gold_player_stats): player_id, name, team_id, team_name, "
+        f"position, nationality, age, jersey_number, league_id\n"
+        f"- `{table_ts}` (gold_team_summary): team_id, team_name, matches_played, "
+        f"wins, draws, losses, goals_for, goals_against, goal_difference, points\n\n"
+        f"Return JSON with exactly these keys (raw JSON, no markdown):\n"
+        f'{{"sql": "SELECT ...", "chart_type": "bar", "title": "..."}}\n\n'
+        f"SQL rules: SELECT only, 2 columns (string label first, number second), LIMIT 20 max.\n"
+        f"chart_type must be exactly one of: bar, line, doughnut."
     )
-    rows = bq.run_query(sql)
-    return {
-        "labels": [r["nationality"] for r in rows],
-        "data": [r["cnt"] for r in rows],
-        "title": "Top 10 Nationalities",
-    }
+
+    plan_resp = client.models.generate_content(
+        model=_MODEL,
+        contents=plan_prompt,
+        config=types.GenerateContentConfig(response_mime_type="application/json"),
+    )
+
+    try:
+        plan = json.loads(plan_resp.text or "{}")
+    except (json.JSONDecodeError, TypeError):
+        raise HTTPException(status_code=500, detail="Gemini returned an unparseable chart plan")
+
+    sql = (plan.get("sql") or "").strip()
+    chart_type = plan.get("chart_type", "bar")
+    title = plan.get("title") or body.request
+
+    if not sql.upper().lstrip().startswith("SELECT"):
+        raise HTTPException(status_code=400, detail="Gemini did not produce a SELECT query")
+    if chart_type not in ("bar", "line", "doughnut"):
+        chart_type = "bar"
+
+    try:
+        rows = bq.run_query(sql)
+    except Exception as exc:
+        logger.error("AI chart query failed: sql=%s err=%s", sql, exc)
+        raise HTTPException(status_code=422, detail=f"Query execution failed: {exc}")
+
+    if not rows:
+        return {"labels": [], "data": [], "chart_type": chart_type, "title": title}
+
+    keys = list(rows[0].keys())
+    label_key = keys[0]
+    value_key = keys[1] if len(keys) > 1 else keys[0]
+    labels = [str(r.get(label_key, "")) for r in rows]
+    data: list[float] = []
+    for r in rows:
+        v = r.get(value_key, 0)
+        try:
+            data.append(float(v))
+        except (TypeError, ValueError):
+            data.append(0.0)
+
+    return {"labels": labels, "data": data, "chart_type": chart_type, "title": title}
 
 
 @app.post("/report/pdf/{player_name}")
