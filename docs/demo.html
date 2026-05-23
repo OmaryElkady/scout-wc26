@@ -286,8 +286,31 @@
     }
     .chart-wrap {
       position: relative;
-      height: 240px;
+      height: 220px;
     }
+    .chart-input-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .chart-input-row input {
+      font-size: 13px;
+      padding: 7px 11px;
+    }
+    .chart-btn {
+      font-size: 13px;
+      padding: 7px 14px;
+    }
+    .chart-spinner {
+      display: none;
+      width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      margin: 8px auto 0;
+    }
+    .chart-spinner.visible { display: block; }
 
     /* ── PDF status ── */
     .pdf-success {
@@ -405,35 +428,62 @@
       <div class="icon">📊</div>
       <div>
         <h2>Analytics Dashboard</h2>
-        <p>Live charts drawn from BigQuery gold tables</p>
+        <p>Scout-focused visualizations powered by BigQuery</p>
       </div>
     </div>
     <div class="card-body">
       <div class="charts-grid">
+
+        <!-- Chart 1: Squad Age Profile (horizontal bar, youngest first) -->
         <div class="chart-card">
-          <div class="chart-card-title" id="chart-positions-title">Players by Position</div>
+          <div class="chart-card-title" id="chart-age-title">Youngest Squads (Avg Age)</div>
           <div class="chart-wrap">
-            <canvas id="chart-positions"></canvas>
+            <canvas id="chart-squad-age"></canvas>
           </div>
         </div>
+
+        <!-- Chart 2: Top 15 Teams by Points (vertical bar) -->
         <div class="chart-card">
           <div class="chart-card-title" id="chart-teams-title">Top 15 Teams by Points</div>
           <div class="chart-wrap">
             <canvas id="chart-teams"></canvas>
           </div>
         </div>
+
+        <!-- Chart 3: Position Depth by Team (interactive) -->
         <div class="chart-card">
-          <div class="chart-card-title" id="chart-ages-title">Player Age Distribution</div>
-          <div class="chart-wrap">
-            <canvas id="chart-ages"></canvas>
+          <div class="chart-card-title" id="chart-depth-title">Position Depth</div>
+          <div class="chart-input-row">
+            <input
+              type="text"
+              id="depth-team-input"
+              placeholder="Team name…"
+              value="England"
+            />
+            <button class="chart-btn" onclick="updateDepthChart()">Update</button>
+          </div>
+          <div class="chart-wrap" id="depth-wrap">
+            <canvas id="chart-depth"></canvas>
           </div>
         </div>
+
+        <!-- Chart 4: AI-Generated Chart -->
         <div class="chart-card">
-          <div class="chart-card-title" id="chart-nationalities-title">Top 10 Nationalities</div>
-          <div class="chart-wrap">
-            <canvas id="chart-nationalities"></canvas>
+          <div class="chart-card-title" id="chart-ai-title">AI-Generated Chart</div>
+          <div class="chart-input-row">
+            <input
+              type="text"
+              id="ai-chart-input"
+              placeholder="Describe a chart you want to see…"
+            />
+            <button class="chart-btn" id="ai-chart-btn" onclick="generateAiChart()">Generate</button>
+          </div>
+          <div class="chart-spinner" id="ai-chart-spinner"></div>
+          <div class="chart-wrap" id="ai-wrap">
+            <canvas id="chart-ai"></canvas>
           </div>
         </div>
+
       </div>
     </div>
   </div>
@@ -545,7 +595,6 @@
 
       const r = await res.json();
 
-      // Populate hero
       document.getElementById("report-avatar").textContent =
         r.position === "GK" ? "🧤" :
         r.position === "DEF" ? "🛡️" :
@@ -561,10 +610,8 @@
         r.recommendation && `<span class="rec-chip ${recClass(r.recommendation)}">${r.recommendation}</span>`,
       ].filter(Boolean).join("");
 
-      // Summary
       document.getElementById("report-summary").textContent = r.summary || "—";
 
-      // Strengths
       const strengths = document.getElementById("report-strengths");
       strengths.innerHTML = (r.strengths || [])
         .map(s => `<span class="strength-tag">${s}</span>`)
@@ -640,100 +687,164 @@
     yellow: "#d29922",
     red:    "#f85149",
     muted:  "#8b949e",
+    purple: "#bc8cff",
   };
 
-  const CHART_CONFIGS = [
-    {
-      canvasId: "chart-positions",
-      titleId: "chart-positions-title",
-      url: "/charts/position-breakdown",
-      type: "doughnut",
-      colors: [C.blue, C.green, C.yellow, C.red, C.muted],
-    },
-    {
-      canvasId: "chart-teams",
-      titleId: "chart-teams-title",
-      url: "/charts/top-teams",
-      type: "bar",
-      colors: C.blue,
-      indexAxis: "x",
-    },
-    {
-      canvasId: "chart-ages",
-      titleId: "chart-ages-title",
-      url: "/charts/age-distribution",
-      type: "line",
-      colors: C.green,
-    },
-    {
-      canvasId: "chart-nationalities",
-      titleId: "chart-nationalities-title",
-      url: "/charts/nationality-breakdown",
-      type: "bar",
-      colors: C.yellow,
-      indexAxis: "y",
-    },
-  ];
+  // Tracks live Chart.js instances so we can destroy before re-render.
+  const _charts = {};
+
+  function _renderChart(canvasId, { labels, data, chart_type = "bar", title }, opts = {}) {
+    if (_charts[canvasId]) {
+      _charts[canvasId].destroy();
+      delete _charts[canvasId];
+    }
+
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+
+    const isDoughnut = chart_type === "doughnut";
+    const isLine     = chart_type === "line";
+    const indexAxis  = opts.indexAxis || "x";
+    const color      = opts.color || C.blue;
+
+    _charts[canvasId] = new Chart(canvas, {
+      type: chart_type,
+      data: {
+        labels,
+        datasets: [{
+          data,
+          backgroundColor: isDoughnut
+            ? [C.blue, C.green, C.yellow, C.red, C.muted, C.purple]
+            : (isLine ? "transparent" : color + "33"),
+          borderColor: isDoughnut
+            ? [C.blue, C.green, C.yellow, C.red, C.muted, C.purple]
+            : color,
+          borderWidth: isLine ? 2 : 1,
+          fill: isLine,
+          tension: isLine ? 0.35 : 0,
+          pointRadius: isLine ? 2 : 0,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        indexAxis,
+        plugins: {
+          legend: {
+            display: isDoughnut,
+            labels: { color: "#c9d1d9", padding: 14, boxWidth: 12 },
+          },
+        },
+        scales: isDoughnut ? {} : {
+          x: { ticks: { color: "#8b949e", maxRotation: 45 }, grid: { color: "#30363d" } },
+          y: { ticks: { color: "#8b949e" }, grid: { color: "#30363d" } },
+        },
+      },
+    });
+  }
+
+  // Restore a canvas inside a wrap div (needed after an error div replaced it).
+  function _ensureCanvas(wrapId, canvasId) {
+    if (!document.getElementById(canvasId)) {
+      const wrap = document.getElementById(wrapId);
+      if (wrap) wrap.innerHTML = `<canvas id="${canvasId}"></canvas>`;
+    }
+  }
+
+  // Load a static (non-interactive) chart from a GET endpoint.
+  async function _loadStaticChart(canvasId, titleId, url, chartType, opts = {}) {
+    try {
+      const res = await fetch(`${API}${url}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const payload = await res.json();
+      _renderChart(canvasId, { ...payload, chart_type: chartType }, opts);
+      const titleEl = document.getElementById(titleId);
+      if (titleEl) titleEl.textContent = payload.title;
+    } catch (err) {
+      const card = document.getElementById(canvasId)?.closest(".chart-card");
+      const wrap = card?.querySelector(".chart-wrap");
+      if (wrap) wrap.innerHTML =
+        `<div class="empty-state" style="color:var(--red)">⚠ ${err.message}</div>`;
+    }
+  }
+
+  // ── Chart 1: Squad Age Profile ─────────────────────────────────────────────
+  // ── Chart 2: Top 15 Teams by Points ───────────────────────────────────────
 
   async function loadCharts() {
-    for (const cfg of CHART_CONFIGS) {
-      try {
-        const res = await fetch(`${API}${cfg.url}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const { labels, data, title } = await res.json();
+    _loadStaticChart("chart-squad-age", "chart-age-title",
+      "/charts/squad-age-profile", "bar", { indexAxis: "y", color: C.blue });
 
-        const canvas = document.getElementById(cfg.canvasId);
-        const multiColor = Array.isArray(cfg.colors);
-        const isDoughnut = cfg.type === "doughnut";
-        const isLine = cfg.type === "line";
+    _loadStaticChart("chart-teams", "chart-teams-title",
+      "/charts/top-teams", "bar", { color: C.green });
+  }
 
-        new Chart(canvas, {
-          type: cfg.type,
-          data: {
-            labels,
-            datasets: [{
-              data,
-              backgroundColor: isDoughnut
-                ? cfg.colors
-                : (isLine ? "transparent" : (multiColor ? cfg.colors : cfg.colors + "33")),
-              borderColor: multiColor ? cfg.colors : cfg.colors,
-              borderWidth: isLine ? 2 : 1,
-              fill: isLine,
-              tension: isLine ? 0.35 : 0,
-              pointRadius: isLine ? 2 : 0,
-            }],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            indexAxis: cfg.indexAxis || "x",
-            plugins: {
-              legend: {
-                display: isDoughnut,
-                labels: { color: "#c9d1d9", padding: 14, boxWidth: 12 },
-              },
-              tooltip: { callbacks: {} },
-            },
-            scales: isDoughnut ? {} : {
-              x: {
-                ticks: { color: "#8b949e", maxRotation: 45 },
-                grid: { color: "#30363d" },
-              },
-              y: {
-                ticks: { color: "#8b949e" },
-                grid: { color: "#30363d" },
-              },
-            },
-          },
-        });
+  // ── Chart 3: Position Depth (interactive) ─────────────────────────────────
 
-        const titleEl = document.getElementById(cfg.titleId);
-        if (titleEl) titleEl.textContent = title;
-      } catch (err) {
-        const wrap = document.getElementById(cfg.canvasId)?.closest(".chart-card");
-        if (wrap) wrap.innerHTML =
-          `<div class="empty-state" style="color:var(--red)">⚠ ${err.message}</div>`;
-      }
+  document.getElementById("depth-team-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") updateDepthChart();
+  });
+
+  function updateDepthChart() {
+    const name = document.getElementById("depth-team-input").value.trim();
+    if (name) loadDepthChart(name);
+  }
+
+  async function loadDepthChart(teamName) {
+    const titleEl = document.getElementById("chart-depth-title");
+    _ensureCanvas("depth-wrap", "chart-depth");
+    try {
+      const res = await fetch(`${API}/charts/team-depth/${encodeURIComponent(teamName)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const payload = await res.json();
+      _renderChart("chart-depth", { ...payload, chart_type: "bar" }, { color: C.yellow });
+      if (titleEl) titleEl.textContent = payload.title;
+    } catch (err) {
+      if (titleEl) titleEl.textContent = "Position Depth";
+      const wrap = document.getElementById("depth-wrap");
+      if (wrap) wrap.innerHTML =
+        `<div class="empty-state" style="color:var(--red)">⚠ ${err.message}</div>`;
+    }
+  }
+
+  // ── Chart 4: AI-Generated Chart ────────────────────────────────────────────
+
+  document.getElementById("ai-chart-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") generateAiChart();
+  });
+
+  async function generateAiChart() {
+    const request = document.getElementById("ai-chart-input").value.trim();
+    if (!request) return;
+
+    const titleEl  = document.getElementById("chart-ai-title");
+    const spinner  = document.getElementById("ai-chart-spinner");
+    const btn      = document.getElementById("ai-chart-btn");
+
+    spinner.classList.add("visible");
+    btn.disabled = true;
+    if (titleEl) titleEl.textContent = "Generating…";
+    _ensureCanvas("ai-wrap", "chart-ai");
+
+    try {
+      const res = await fetch(`${API}/charts/ai-generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request }),
+      });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const payload = await res.json();
+
+      _renderChart("chart-ai", payload, { color: C.purple });
+      if (titleEl) titleEl.textContent = payload.title || request;
+    } catch (err) {
+      if (titleEl) titleEl.textContent = "AI-Generated Chart";
+      const wrap = document.getElementById("ai-wrap");
+      if (wrap) wrap.innerHTML =
+        `<div class="empty-state" style="color:var(--red)">⚠ ${err.message}</div>`;
+    } finally {
+      spinner.classList.remove("visible");
+      btn.disabled = false;
     }
   }
 
@@ -782,6 +893,7 @@
   // ── Boot ──────────────────────────────────────────────────────────────────
   loadTeams();
   loadCharts();
+  loadDepthChart("England");
 </script>
 </body>
 </html>
