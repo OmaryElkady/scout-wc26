@@ -21,6 +21,7 @@ def _table_map() -> dict[str, str]:
         "silver_players": config.table("silver_players"),
         "gold_player_stats": config.table("gold_player_stats"),
         "gold_team_summary": config.table("gold_team_summary"),
+        "gold_match_results": config.table("gold_match_results"),
     }
 
 
@@ -35,7 +36,7 @@ def run_silver_transforms() -> None:
 
 def run_gold_transforms() -> None:
     tables = _table_map()
-    for filename in ("gold_player_stats.sql", "gold_team_summary.sql"):
+    for filename in ("gold_player_stats.sql", "gold_team_summary.sql", "gold_match_results.sql"):
         sql = load_query(filename).format(**tables)
         logger.info("Running gold transform: %s", filename)
         bq.run_query(sql)

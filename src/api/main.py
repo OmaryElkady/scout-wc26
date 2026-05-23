@@ -142,21 +142,38 @@ def chart_ai_generate(body: ChartRequest) -> dict:
 
     table_ps = config.table("gold_player_stats")
     table_ts = config.table("gold_team_summary")
+    table_mr = config.table("gold_match_results")
 
     client = genai.Client(vertexai=True, project=config.PROJECT_ID, location=config.REGION)
 
     plan_prompt = (
         f'You are a data visualization expert building charts from BigQuery.\n\n'
         f'User wants to see: "{body.request}"\n\n'
-        f"Available BigQuery tables:\n"
-        f"- `{table_ps}` (gold_player_stats): player_id, name, team_id, team_name, "
-        f"position, nationality, age, jersey_number, league_id\n"
-        f"- `{table_ts}` (gold_team_summary): team_id, team_name, matches_played, "
-        f"wins, draws, losses, goals_for, goals_against, goal_difference, points\n\n"
+        f"You have access to these BigQuery tables. Generate a SQL SELECT query using ONLY these tables and columns:\n\n"
+        f"gold_player_stats columns (full ID: `{table_ps}`):\n"
+        f"  player_id, name, team_name, position (GK/DEF/MID/FWD/UNKNOWN),\n"
+        f"  nationality, age, jersey_number, league_id\n\n"
+        f"gold_team_summary columns (full ID: `{table_ts}`):\n"
+        f"  team_name, matches_played, wins, draws, losses,\n"
+        f"  goals_for, goals_against, goal_difference, points\n\n"
+        f"gold_match_results columns (full ID: `{table_mr}`):\n"
+        f"  fixture_id, home_team_name, away_team_name,\n"
+        f"  home_score, away_score, match_date, winner,\n"
+        f"  goal_difference, total_goals\n\n"
+        f"IMPORTANT RULES:\n"
+        f"- Only use SELECT queries\n"
+        f"- Use LIMIT 20 maximum\n"
+        f"- Return exactly 2 columns: a string label column first, a numeric value column second\n"
+        f"- For player performance (goals scored, assists) — this data is NOT available; "
+        f"set sql to null and explain in the error field instead of generating bad SQL\n"
+        f"- For match results and team scores, use gold_match_results\n"
+        f"- For player profiles and squad data, use gold_player_stats\n"
+        f"- For league standings, use gold_team_summary\n"
+        f"- Table references must use the full IDs provided above\n\n"
         f"Return JSON with exactly these keys (raw JSON, no markdown):\n"
-        f'{{"sql": "SELECT ...", "chart_type": "bar", "title": "..."}}\n\n'
-        f"SQL rules: SELECT only, 2 columns (string label first, number second), LIMIT 20 max.\n"
-        f"chart_type must be exactly one of: bar, line, doughnut."
+        f'{{"sql": "SELECT ...", "chart_type": "bar|line|doughnut", "title": "descriptive title", "error": null}}\n\n'
+        f"If the request cannot be answered with available data, return:\n"
+        f'{{"sql": null, "chart_type": null, "title": null, "error": "explanation of why"}}'
     )
 
     plan_resp = client.models.generate_content(
@@ -169,6 +186,9 @@ def chart_ai_generate(body: ChartRequest) -> dict:
         plan = json.loads(plan_resp.text or "{}")
     except (json.JSONDecodeError, TypeError):
         raise HTTPException(status_code=500, detail="Gemini returned an unparseable chart plan")
+
+    if plan.get("error"):
+        raise HTTPException(status_code=422, detail=plan["error"])
 
     sql = (plan.get("sql") or "").strip()
     chart_type = plan.get("chart_type", "bar")
