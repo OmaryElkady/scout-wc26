@@ -26,6 +26,7 @@ _TOOL_FUNCTIONS = [
     agent_tools.query_team_summary,
     agent_tools.get_player_detail,
     agent_tools.get_top_players_by_position,
+    agent_tools.refresh_scouting_data,
 ]
 
 
