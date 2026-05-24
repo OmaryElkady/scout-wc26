@@ -7,6 +7,7 @@ from src.ingestion.bq_loader import (
     write_bronze_fixtures,
     write_bronze_players,
     write_bronze_standings,
+    write_bronze_top_performers,
 )
 
 
@@ -121,3 +122,95 @@ def test_write_bronze_standings_skips_on_empty_input():
     with patch("src.ingestion.bq_loader.bq") as mock_bq:
         write_bronze_standings([])
         mock_bq.insert_rows.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# write_bronze_top_performers
+# ---------------------------------------------------------------------------
+
+_SAMPLE_SCORER = {"id": 10, "name": "Ronaldo", "teamId": 5, "teamName": "Portugal", "goals": 12}
+_SAMPLE_ASSISTER = {"id": 20, "name": "Mbappe", "teamId": 3, "teamName": "France", "assists": 7}
+_SAMPLE_RATED = {"id": 30, "name": "Bellingham", "teamId": 7, "teamName": "England", "rating": 8.73}
+
+
+def test_write_bronze_top_performers_targets_correct_table():
+    with patch("src.ingestion.bq_loader.bq") as mock_bq:
+        write_bronze_top_performers([_SAMPLE_SCORER], [], [])
+        table = mock_bq.insert_rows.call_args[0][0]
+    assert table == "bronze_top_performers"
+
+
+def test_write_bronze_top_performers_adds_ingested_at():
+    with patch("src.ingestion.bq_loader.bq") as mock_bq:
+        write_bronze_top_performers([_SAMPLE_SCORER], [], [])
+        _, rows = mock_bq.insert_rows.call_args[0]
+    assert "ingested_at" in rows[0]
+    datetime.fromisoformat(rows[0]["ingested_at"])
+
+
+def test_write_bronze_top_performers_adds_source():
+    with patch("src.ingestion.bq_loader.bq") as mock_bq:
+        write_bronze_top_performers([_SAMPLE_SCORER], [], [])
+        _, rows = mock_bq.insert_rows.call_args[0]
+    assert rows[0]["source"] == "free-api-live-football-data"
+
+
+def test_write_bronze_top_performers_maps_scorer_fields():
+    with patch("src.ingestion.bq_loader.bq") as mock_bq:
+        write_bronze_top_performers([_SAMPLE_SCORER], [], [])
+        _, rows = mock_bq.insert_rows.call_args[0]
+    row = rows[0]
+    assert row["player_id"] == "10"
+    assert row["player_name"] == "Ronaldo"
+    assert row["team_id"] == "5"
+    assert row["team_name"] == "Portugal"
+    assert row["goals"] == 12
+    assert row["assists"] is None
+    assert row["rating"] is None
+    assert row["stat_type"] == "goals"
+
+
+def test_write_bronze_top_performers_maps_assister_fields():
+    with patch("src.ingestion.bq_loader.bq") as mock_bq:
+        write_bronze_top_performers([], [_SAMPLE_ASSISTER], [])
+        _, rows = mock_bq.insert_rows.call_args[0]
+    row = rows[0]
+    assert row["player_id"] == "20"
+    assert row["assists"] == 7
+    assert row["goals"] is None
+    assert row["stat_type"] == "assists"
+
+
+def test_write_bronze_top_performers_maps_rated_fields():
+    with patch("src.ingestion.bq_loader.bq") as mock_bq:
+        write_bronze_top_performers([], [], [_SAMPLE_RATED])
+        _, rows = mock_bq.insert_rows.call_args[0]
+    row = rows[0]
+    assert row["player_id"] == "30"
+    assert row["rating"] == 8.73
+    assert row["goals"] is None
+    assert row["assists"] is None
+    assert row["stat_type"] == "rating"
+
+
+def test_write_bronze_top_performers_merges_all_three_lists():
+    with patch("src.ingestion.bq_loader.bq") as mock_bq:
+        write_bronze_top_performers([_SAMPLE_SCORER], [_SAMPLE_ASSISTER], [_SAMPLE_RATED])
+        _, rows = mock_bq.insert_rows.call_args[0]
+    assert len(rows) == 3
+    stat_types = {r["stat_type"] for r in rows}
+    assert stat_types == {"goals", "assists", "rating"}
+
+
+def test_write_bronze_top_performers_skips_on_all_empty():
+    with patch("src.ingestion.bq_loader.bq") as mock_bq:
+        write_bronze_top_performers([], [], [])
+        mock_bq.insert_rows.assert_not_called()
+
+
+def test_write_bronze_top_performers_all_rows_share_ingested_at():
+    with patch("src.ingestion.bq_loader.bq") as mock_bq:
+        write_bronze_top_performers([_SAMPLE_SCORER], [_SAMPLE_ASSISTER], [_SAMPLE_RATED])
+        _, rows = mock_bq.insert_rows.call_args[0]
+    timestamps = {r["ingested_at"] for r in rows}
+    assert len(timestamps) == 1  # all share the same timestamp
