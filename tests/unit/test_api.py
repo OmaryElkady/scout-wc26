@@ -193,3 +193,64 @@ async def test_players_no_filters_passes_none(mock_qp):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         await client.get("/players")
     mock_qp.assert_called_once_with(position=None, team_name=None, nationality=None)
+
+
+# ---------------------------------------------------------------------------
+# GET /leaderboard
+# ---------------------------------------------------------------------------
+
+_SAMPLE_SCORERS = [
+    {"player_name": "Ronaldo", "team_name": "Portugal", "goals": 12, "rank": 1},
+    {"player_name": "Mbappe",  "team_name": "France",   "goals": 10, "rank": 2},
+]
+
+
+@pytest.mark.asyncio
+@patch("src.utils.bq_client.bq.run_query", return_value=_SAMPLE_SCORERS)
+async def test_leaderboard_returns_200(mock_bq):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/leaderboard?stat=goals&limit=10")
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+@patch("src.utils.bq_client.bq.run_query", return_value=_SAMPLE_SCORERS)
+async def test_leaderboard_response_shape(mock_bq):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/leaderboard?stat=goals&limit=10")
+    data = response.json()
+    assert "players" in data
+    assert "stat" in data
+    assert "league" in data
+    assert isinstance(data["players"], list)
+    assert data["stat"] == "goals"
+
+
+@pytest.mark.asyncio
+@patch("src.utils.bq_client.bq.run_query", return_value=_SAMPLE_SCORERS)
+async def test_leaderboard_players_match_bq_result(mock_bq):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/leaderboard?stat=goals&limit=10")
+    data = response.json()
+    assert len(data["players"]) == 2
+    assert data["players"][0]["player_name"] == "Ronaldo"
+
+
+@pytest.mark.asyncio
+@patch("src.utils.bq_client.bq.run_query", return_value=[])
+async def test_leaderboard_empty_returns_empty_players_list(mock_bq):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/leaderboard?stat=assists")
+    data = response.json()
+    assert data["players"] == []
+    assert data["stat"] == "assists"
+
+
+@pytest.mark.asyncio
+@patch("src.utils.bq_client.bq.run_query", return_value=[])
+async def test_leaderboard_invalid_stat_defaults_to_goals(mock_bq):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/leaderboard?stat=invalid")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["stat"] == "goals"
