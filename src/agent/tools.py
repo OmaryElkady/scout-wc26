@@ -350,6 +350,52 @@ def get_league_overview() -> dict[str, Any]:
     }
 
 
+def get_top_performers(stat: str = "goals", limit: int = 10) -> list[dict[str, Any]]:
+    """Get top players ranked by goals, assists, or rating.
+
+    stat must be one of: 'goals', 'assists', 'rating'
+    Use this when asked about: top scorers, most goals, best rated players,
+    top assisters, leaderboard, who scored the most, best players by performance.
+    Returns ranked list with player name, team, and stat value.
+
+    Parameters
+    ----------
+    stat : str
+        Statistic to rank by. One of 'goals', 'assists', 'rating'.
+    limit : int
+        Maximum number of players to return. Capped at 20.
+    """
+    valid = {"goals", "assists", "rating"}
+    if stat not in valid:
+        stat = "goals"
+    safe_limit = min(max(1, int(limit)), 20)
+    table = config.table("gold_top_performers")
+    sql = (
+        "SELECT player_name, team_name, "
+        + stat
+        + ", rank FROM `"
+        + table
+        + "` WHERE stat_type = '"
+        + stat
+        + "' AND "
+        + stat
+        + " IS NOT NULL ORDER BY rank ASC LIMIT "
+        + str(safe_limit)
+    )
+    logger.info("get_top_performers: stat=%s limit=%d", stat, safe_limit)
+    rows = bq.run_query(sql)
+    if not rows:
+        return [
+            {
+                "message": (
+                    "Top performers data not yet loaded. "
+                    "Ask me to refresh the scouting data."
+                )
+            }
+        ]
+    return rows
+
+
 _LEAGUE_MAP: dict[str, int] = {
     "world cup": 77,
     "world cup 2026": 77,
@@ -514,6 +560,21 @@ def _direct_api_ingest(_emit=None) -> None:
     for team_id, team_name in teams.items():
         players = football_api.get_players_by_team(team_id)
         write_bronze_team_squads(team_id, players, team_name=team_name)
+    # Top performers (supplementary — non-fatal if endpoint not available for this league)
+    try:
+        from src.ingestion.bq_loader import write_bronze_top_performers
+        scorers = football_api.get_top_scorers()
+        assisters = football_api.get_top_assisters()
+        rated = football_api.get_top_rated()
+        write_bronze_top_performers(scorers, assisters, rated)
+        logger.info(
+            "Direct API ingest: top performers written (%d scorers, %d assisters, %d rated)",
+            len(scorers),
+            len(assisters),
+            len(rated),
+        )
+    except Exception as exc:
+        logger.warning("Top performers ingestion skipped (non-fatal): %s", exc)
     _p("💾 Writing to BigQuery Bronze...", "done", 60)
     logger.info("Direct API ingest: complete")
 
