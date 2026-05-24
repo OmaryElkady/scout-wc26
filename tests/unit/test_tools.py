@@ -5,6 +5,7 @@ from src.agent.tools import (
     get_league_overview,
     get_player_detail,
     get_team_roster,
+    get_top_performers,
     get_top_players_by_position,
     query_players,
     query_team_summary,
@@ -634,6 +635,65 @@ def test_switch_league_ingest_failure_returns_error():
     assert result["status"] == "error"
     assert result["league_id"] == 47
     mock_run.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# get_top_performers
+# ---------------------------------------------------------------------------
+
+
+def test_get_top_performers_returns_rows_from_bq():
+    with patch("src.agent.tools.bq") as mock_bq:
+        expected = [{"player_name": "Ronaldo", "team_name": "Portugal", "goals": 12, "rank": 1}]
+        mock_bq.run_query.return_value = expected
+        result = get_top_performers(stat="goals", limit=10)
+    assert result == expected
+
+
+def test_get_top_performers_sql_filters_by_stat_type():
+    with patch("src.agent.tools.bq") as mock_bq:
+        mock_bq.run_query.return_value = []
+        get_top_performers(stat="assists", limit=5)
+        sql = mock_bq.run_query.call_args[0][0]
+        assert "stat_type = 'assists'" in sql
+        assert "assists IS NOT NULL" in sql
+        assert "LIMIT 5" in sql
+
+
+def test_get_top_performers_invalid_stat_defaults_to_goals():
+    with patch("src.agent.tools.bq") as mock_bq:
+        mock_bq.run_query.return_value = []
+        get_top_performers(stat="nonsense")
+        sql = mock_bq.run_query.call_args[0][0]
+        assert "stat_type = 'goals'" in sql
+
+
+def test_get_top_performers_limit_capped_at_20():
+    with patch("src.agent.tools.bq") as mock_bq:
+        mock_bq.run_query.return_value = []
+        get_top_performers(stat="rating", limit=999)
+        sql = mock_bq.run_query.call_args[0][0]
+        assert "LIMIT 20" in sql
+
+
+def test_get_top_performers_empty_bq_returns_message():
+    with patch("src.agent.tools.bq") as mock_bq:
+        mock_bq.run_query.return_value = []
+        result = get_top_performers(stat="goals")
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert "message" in result[0]
+    assert "refresh" in result[0]["message"].lower()
+
+
+def test_get_top_performers_uses_gold_top_performers_table(monkeypatch):
+    monkeypatch.setattr(config_module.config, "PROJECT_ID", "proj-test")
+    monkeypatch.setattr(config_module.config, "BQ_DATASET", "ds_test")
+    with patch("src.agent.tools.bq") as mock_bq:
+        mock_bq.run_query.return_value = []
+        get_top_performers(stat="goals")
+        sql = mock_bq.run_query.call_args[0][0]
+        assert "proj-test.ds_test.gold_top_performers" in sql
 
 
 def test_switch_league_pipeline_failure_returns_partial():
