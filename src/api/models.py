@@ -14,6 +14,7 @@ class ChartRequest(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     question: str
+    page_actions: list[dict[str, Any]] = []
 
 
 class ReportResponse(BaseModel):
