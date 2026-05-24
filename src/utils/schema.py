@@ -48,6 +48,18 @@ _BRONZE_SCHEMAS: dict[str, list[bigquery.SchemaField]] = {
         bigquery.SchemaField("ingested_at",     "TIMESTAMP"),
         bigquery.SchemaField("source",          "STRING"),
     ],
+    "bronze_top_performers": [
+        bigquery.SchemaField("player_id",       "STRING"),
+        bigquery.SchemaField("player_name",     "STRING"),
+        bigquery.SchemaField("team_id",         "STRING"),
+        bigquery.SchemaField("team_name",       "STRING"),
+        bigquery.SchemaField("goals",           "INTEGER", mode="NULLABLE"),
+        bigquery.SchemaField("assists",         "INTEGER", mode="NULLABLE"),
+        bigquery.SchemaField("rating",          "FLOAT",   mode="NULLABLE"),
+        bigquery.SchemaField("stat_type",       "STRING"),
+        bigquery.SchemaField("ingested_at",     "TIMESTAMP"),
+        bigquery.SchemaField("source",          "STRING"),
+    ],
 }
 # fmt: on
 
@@ -131,6 +143,16 @@ _GOLD_SCHEMAS: dict[str, list[bigquery.SchemaField]] = {
         bigquery.SchemaField("winner",          "STRING"),
         bigquery.SchemaField("goal_difference", "INTEGER"),
         bigquery.SchemaField("total_goals",     "INTEGER"),
+    ],
+    "gold_top_performers": [
+        bigquery.SchemaField("player_id",       "STRING"),
+        bigquery.SchemaField("player_name",     "STRING"),
+        bigquery.SchemaField("team_name",       "STRING"),
+        bigquery.SchemaField("goals",           "INTEGER", mode="NULLABLE"),
+        bigquery.SchemaField("assists",         "INTEGER", mode="NULLABLE"),
+        bigquery.SchemaField("rating",          "FLOAT",   mode="NULLABLE"),
+        bigquery.SchemaField("stat_type",       "STRING"),
+        bigquery.SchemaField("rank",            "INTEGER"),
     ],
 }
 # fmt: on
