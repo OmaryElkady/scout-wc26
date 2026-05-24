@@ -9,6 +9,7 @@ from src.agent.tools import (
     query_players,
     query_team_summary,
     refresh_scouting_data,
+    switch_league,
 )
 from src.utils import config as config_module
 
@@ -534,3 +535,116 @@ def test_get_league_overview_competition_string():
         mock_bq.run_query.side_effect = _make_bq_side_effect()
         result = get_league_overview()
     assert "10195" in result["competition"]
+
+
+# ---------------------------------------------------------------------------
+# switch_league
+# ---------------------------------------------------------------------------
+
+_TOOLS_MODULE = "src.agent.tools"
+_PIPELINE_TRANSFORM = "src.pipeline.transform"
+
+
+def test_switch_league_known_name_maps_to_correct_id():
+    """Exact key in LEAGUE_MAP resolves to the right league_id without API call."""
+    mock_fa = MagicMock()
+    with (
+        patch("src.utils.football_api.football_api", mock_fa),
+        patch(f"{_TOOLS_MODULE}._direct_api_ingest"),
+        patch(f"{_PIPELINE_TRANSFORM}.run_all"),
+    ):
+        result = switch_league("premier league")
+    assert result["status"] == "switched"
+    assert result["league_id"] == 47
+    assert result["league_name"] == "Premier League"
+    mock_fa._get.assert_not_called()
+
+
+def test_switch_league_fuzzy_match_world_cup():
+    """Partial name 'world cup' fuzzy-matches to league_id 77."""
+    mock_fa = MagicMock()
+    with (
+        patch("src.utils.football_api.football_api", mock_fa),
+        patch(f"{_TOOLS_MODULE}._direct_api_ingest"),
+        patch(f"{_PIPELINE_TRANSFORM}.run_all"),
+    ):
+        result = switch_league("world cup")
+    assert result["status"] == "switched"
+    assert result["league_id"] == 77
+    assert result["league_name"] == "World Cup 2026"
+    mock_fa._get.assert_not_called()
+
+
+def test_switch_league_fuzzy_match_phrase_in_sentence():
+    """Input containing 'champions league' anywhere still maps to league_id 42."""
+    mock_fa = MagicMock()
+    with (
+        patch("src.utils.football_api.football_api", mock_fa),
+        patch(f"{_TOOLS_MODULE}._direct_api_ingest"),
+        patch(f"{_PIPELINE_TRANSFORM}.run_all"),
+    ):
+        result = switch_league("switch to the champions league please")
+    assert result["status"] == "switched"
+    assert result["league_id"] == 42
+
+
+def test_switch_league_unknown_name_falls_back_to_api_search():
+    """Unknown league name triggers football API search and uses the first result."""
+    mock_fa = MagicMock()
+    mock_fa._get.return_value = {
+        "response": [{"id": 999, "name": "Fictional Super League"}]
+    }
+    with (
+        patch("src.utils.football_api.football_api", mock_fa),
+        patch(f"{_TOOLS_MODULE}._direct_api_ingest"),
+        patch(f"{_PIPELINE_TRANSFORM}.run_all"),
+    ):
+        result = switch_league("fictional super league xyz")
+    assert result["status"] == "switched"
+    assert result["league_id"] == 999
+    assert result["league_name"] == "Fictional Super League"
+    mock_fa._get.assert_called_once()
+
+
+def test_switch_league_api_search_empty_returns_error():
+    """If API search returns nothing, switch_league returns an error dict."""
+    mock_fa = MagicMock()
+    mock_fa._get.return_value = {"response": []}
+    with (
+        patch("src.utils.football_api.football_api", mock_fa),
+        patch(f"{_TOOLS_MODULE}._direct_api_ingest") as mock_ingest,
+        patch(f"{_PIPELINE_TRANSFORM}.run_all") as mock_run,
+    ):
+        result = switch_league("nonexistent league zzzz")
+    assert result["status"] == "error"
+    assert "nonexistent league zzzz" in result["message"]
+    mock_ingest.assert_not_called()
+    mock_run.assert_not_called()
+
+
+def test_switch_league_ingest_failure_returns_error():
+    """If _direct_api_ingest raises, switch_league returns error with league info."""
+    mock_fa = MagicMock()
+    with (
+        patch("src.utils.football_api.football_api", mock_fa),
+        patch(f"{_TOOLS_MODULE}._direct_api_ingest", side_effect=RuntimeError("API down")),
+        patch(f"{_PIPELINE_TRANSFORM}.run_all") as mock_run,
+    ):
+        result = switch_league("premier league")
+    assert result["status"] == "error"
+    assert result["league_id"] == 47
+    mock_run.assert_not_called()
+
+
+def test_switch_league_pipeline_failure_returns_partial():
+    """If run_all raises after successful ingest, returns partial status."""
+    mock_fa = MagicMock()
+    with (
+        patch("src.utils.football_api.football_api", mock_fa),
+        patch(f"{_TOOLS_MODULE}._direct_api_ingest"),
+        patch(f"{_PIPELINE_TRANSFORM}.run_all", side_effect=RuntimeError("BQ error")),
+    ):
+        result = switch_league("bundesliga")
+    assert result["status"] == "partial"
+    assert result["league_id"] == 78
+    assert "BQ error" in result["message"]
