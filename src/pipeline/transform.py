@@ -17,11 +17,13 @@ def _table_map() -> dict[str, str]:
     return {
         "bronze_fixtures": config.table("bronze_fixtures"),
         "bronze_players": config.table("bronze_players"),
+        "bronze_top_performers": config.table("bronze_top_performers"),
         "silver_fixtures": config.table("silver_fixtures"),
         "silver_players": config.table("silver_players"),
         "gold_player_stats": config.table("gold_player_stats"),
         "gold_team_summary": config.table("gold_team_summary"),
         "gold_match_results": config.table("gold_match_results"),
+        "gold_top_performers": config.table("gold_top_performers"),
     }
 
 
@@ -41,6 +43,14 @@ def run_gold_transforms() -> None:
         logger.info("Running gold transform: %s", filename)
         bq.run_query(sql)
         logger.info("Completed gold transform: %s", filename)
+    # Top performers is supplementary — non-fatal if bronze_top_performers is empty
+    try:
+        sql = load_query("gold_top_performers.sql").format(**tables)
+        logger.info("Running gold transform: gold_top_performers.sql")
+        bq.run_query(sql)
+        logger.info("Completed gold transform: gold_top_performers.sql")
+    except Exception as exc:
+        logger.warning("gold_top_performers.sql failed (non-fatal): %s", exc)
 
 
 def run_all() -> None:
