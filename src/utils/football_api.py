@@ -200,6 +200,24 @@ class FootballAPIClient:
         logger.info("Fetched %d total players", len(all_players))
         return all_players
 
+    def get_top_scorers(self, league_id: int | None = None) -> list:
+        """Fetch top goal scorers for the active league."""
+        lid = league_id or _WORLD_CUP_LEAGUE_ID
+        data = self._get("/football-get-top-players-by-goals", {"leagueid": lid})
+        return data.get("response", {}).get("players", [])
+
+    def get_top_assisters(self, league_id: int | None = None) -> list:
+        """Fetch top assist providers for the active league."""
+        lid = league_id or _WORLD_CUP_LEAGUE_ID
+        data = self._get("/football-get-top-players-by-assists", {"leagueid": lid})
+        return data.get("response", {}).get("players", [])
+
+    def get_top_rated(self, league_id: int | None = None) -> list:
+        """Fetch top rated players for the active league."""
+        lid = league_id or _WORLD_CUP_LEAGUE_ID
+        data = self._get("/football-get-top-players-by-rating", {"leagueid": lid})
+        return data.get("response", {}).get("players", [])
+
     def get_available_leagues(self) -> list[dict]:
         """Search for World Cup leagues. Returns list of {id, name} dicts."""
         logger.info("Fetching available leagues via /football-leagues-search")
