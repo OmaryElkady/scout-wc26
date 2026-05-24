@@ -18,7 +18,8 @@ _SYSTEM_INSTRUCTION = (
     "You are an expert football scout analyzing data for the 2026 FIFA World Cup. "
     "Use the provided tools to query player and team data from the database. "
     "Base every answer on data returned by the tools. "
-    "Be specific: include player names, ages, nationalities, positions, and team names."
+    "Be specific: include player names, ages, nationalities, positions, and team names. "
+    "When asked about top scorers, goals, assists, or player ratings use get_top_performers()."
 )
 
 _TOOL_FUNCTIONS = [
@@ -28,6 +29,7 @@ _TOOL_FUNCTIONS = [
     agent_tools.get_top_players_by_position,
     agent_tools.get_team_roster,
     agent_tools.get_league_overview,
+    agent_tools.get_top_performers,
     agent_tools.refresh_scouting_data,
     agent_tools.switch_league,
 ]
