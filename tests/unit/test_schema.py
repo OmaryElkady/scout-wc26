@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 from src.utils.schema import create_all_bronze_tables
 
-_EXPECTED_TABLES = {"bronze_fixtures", "bronze_players", "bronze_team_squads"}
+_EXPECTED_TABLES = {"bronze_fixtures", "bronze_players", "bronze_team_squads", "bronze_top_performers"}
 
 
 def _run(mock_config_table_return: str = "p.d.t") -> tuple[MagicMock, MagicMock]:
@@ -16,9 +16,9 @@ def _run(mock_config_table_return: str = "p.d.t") -> tuple[MagicMock, MagicMock]
     return mock_client, mock_config
 
 
-def test_creates_three_tables():
+def test_creates_four_bronze_tables():
     mock_client, _ = _run()
-    assert mock_client.create_table.call_count == 3
+    assert mock_client.create_table.call_count == 4
 
 
 def test_exists_ok_true_on_every_call():
@@ -29,6 +29,6 @@ def test_exists_ok_true_on_every_call():
 
 def test_uses_config_table_for_all_ids():
     _, mock_config = _run()
-    assert mock_config.table.call_count == 3
+    assert mock_config.table.call_count == 4
     called_with = {c.args[0] for c in mock_config.table.call_args_list}
     assert called_with == _EXPECTED_TABLES

@@ -9,6 +9,7 @@ _EXPECTED_TOOLS = {
     "get_top_players_by_position",
     "get_team_roster",
     "get_league_overview",
+    "get_top_performers",
     "refresh_scouting_data",
     "switch_league",
 }
@@ -22,8 +23,8 @@ def test_root_agent_name():
     assert root_agent.name == "scout"
 
 
-def test_root_agent_has_eight_tools():
-    assert len(root_agent.tools) == 8
+def test_root_agent_has_nine_tools():
+    assert len(root_agent.tools) == 9
 
 
 def test_root_agent_tool_names_match_expected():
