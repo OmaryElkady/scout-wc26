@@ -34,3 +34,8 @@ class TeamListResponse(BaseModel):
 class PlayerListResponse(BaseModel):
     players: list[dict[str, Any]]
     count: int
+
+
+class SwitchLeagueRequest(BaseModel):
+    league_id: int
+    league_name: str
