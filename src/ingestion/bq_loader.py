@@ -108,6 +108,59 @@ def write_bronze_standings(rows: list[dict]) -> None:
     bq.insert_rows("bronze_standings", stamped)
 
 
+def write_bronze_top_performers(scorers: list, assisters: list, rated: list) -> None:
+    """Write top scorers, assisters, and rated players to bronze_top_performers.
+
+    Rows from all three lists are merged into a single table keyed by player_id + stat_type.
+    """
+    ts = _now()
+    rows: list[dict] = []
+    for p in scorers:
+        rows.append({
+            "player_id": str(p.get("id", "")),
+            "player_name": p.get("name", ""),
+            "team_id": str(p.get("teamId", "")),
+            "team_name": p.get("teamName", ""),
+            "goals": p.get("goals", 0),
+            "assists": None,
+            "rating": None,
+            "stat_type": "goals",
+            "ingested_at": ts,
+            "source": _SOURCE,
+        })
+    for p in assisters:
+        rows.append({
+            "player_id": str(p.get("id", "")),
+            "player_name": p.get("name", ""),
+            "team_id": str(p.get("teamId", "")),
+            "team_name": p.get("teamName", ""),
+            "goals": None,
+            "assists": p.get("assists", 0),
+            "rating": None,
+            "stat_type": "assists",
+            "ingested_at": ts,
+            "source": _SOURCE,
+        })
+    for p in rated:
+        rows.append({
+            "player_id": str(p.get("id", "")),
+            "player_name": p.get("name", ""),
+            "team_id": str(p.get("teamId", "")),
+            "team_name": p.get("teamName", ""),
+            "goals": None,
+            "assists": None,
+            "rating": p.get("rating"),
+            "stat_type": "rating",
+            "ingested_at": ts,
+            "source": _SOURCE,
+        })
+    if not rows:
+        logger.warning("write_bronze_top_performers: no rows to write, skipping")
+        return
+    logger.info("Writing %d rows to bronze_top_performers", len(rows))
+    bq.insert_rows("bronze_top_performers", rows)
+
+
 def write_bronze_team_squads(team_id: int, rows: list[dict], team_name: str = "") -> None:
     if not rows:
         logger.warning("write_bronze_team_squads called with no rows for team %d, skipping", team_id)
