@@ -15,6 +15,7 @@ from src.api.models import (
     QueryRequest,
     QueryResponse,
     ReportResponse,
+    SwitchLeagueRequest,
     TeamListResponse,
 )
 from src.utils.bq_client import bq
@@ -51,6 +52,9 @@ def _normalize_match(m: dict, *, is_live: bool) -> dict:
 
 _MODEL = "gemini-2.5-flash"
 _DEMO_HTML = pathlib.Path(__file__).parent.parent.parent / "docs" / "demo.html"
+
+# In-memory active league state (session-scoped; resets on container restart).
+_active_league: dict = {"id": config.LEAGUE_ID, "name": "FIFA World Cup Qualification UEFA"}
 
 app = FastAPI(title="Scout WC26", description="AI scouting agent for the 2026 FIFA World Cup")
 
@@ -515,6 +519,32 @@ def teams() -> TeamListResponse:
 def refresh() -> dict:
     logger.info("POST /refresh")
     return agent_tools.refresh_scouting_data()
+
+
+@app.get("/admin/leagues")
+def admin_leagues() -> dict:
+    from src.utils.football_api import football_api as _fa
+
+    leagues = _fa.get_available_leagues()
+    return {"leagues": leagues, "active": _active_league}
+
+
+@app.post("/admin/switch-league")
+def admin_switch_league(body: SwitchLeagueRequest) -> dict:
+    import src.utils.football_api as _fa_mod
+
+    logger.info("POST /admin/switch-league: id=%d name=%s", body.league_id, body.league_name)
+    _fa_mod._WORLD_CUP_LEAGUE_ID = body.league_id
+    _active_league["id"] = body.league_id
+    _active_league["name"] = body.league_name
+
+    refresh_result = agent_tools.refresh_scouting_data()
+    return {
+        "status": "switched",
+        "league": body.league_name,
+        "league_id": body.league_id,
+        "refresh": refresh_result,
+    }
 
 
 @app.get("/players", response_model=PlayerListResponse)
