@@ -638,6 +638,73 @@
     }
     .chart-fade { animation: fadeInChart .45s ease forwards; }
 
+    /* ── Top Performers Leaderboard ── */
+    .lb-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .lb-tab-btn {
+      background: rgba(88,166,255,.08);
+      border: 1px solid rgba(88,166,255,.2);
+      border-radius: 20px;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: var(--font);
+      font-size: 13px;
+      font-weight: 500;
+      padding: 6px 16px;
+      transition: background .15s, border-color .15s, color .15s;
+    }
+    .lb-tab-btn:hover  { background: rgba(88,166,255,.15); color: var(--text); }
+    .lb-tab-btn:active { transform: scale(.97); }
+    .lb-tab-btn.active {
+      background: rgba(88,166,255,.18);
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+    .lb-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .lb-table th {
+      background: rgba(88,166,255,.06);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .5px;
+      text-transform: uppercase;
+      padding: 9px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .lb-table th:last-child { text-align: right; }
+    .lb-table td {
+      padding: 9px 12px;
+      border-bottom: 1px solid rgba(48,54,61,.5);
+      color: var(--text);
+    }
+    .lb-table td:last-child { text-align: right; font-weight: 600; color: #fff; }
+    .lb-table tbody tr:last-child td { border-bottom: none; }
+    .lb-table tbody tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+    .lb-table tbody tr:hover td { background: rgba(88,166,255,.05); }
+    .lb-rank   { width: 36px; text-align: center !important; font-size: 15px; }
+    .lb-player { font-weight: 600; color: #fff; }
+    .lb-team   { color: var(--muted); font-size: 12px; }
+    .lb-empty  { color: var(--muted); font-size: 14px; padding: 24px 0; text-align: center; }
+    .lb-spinner {
+      display: none;
+      width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      margin: 16px auto;
+    }
+    .lb-spinner.visible { display: block; }
+
     /* ── League Selector ── */
     .league-selector {
       display: flex;
@@ -738,6 +805,40 @@
       <div class="spinner" id="matches-spinner"></div>
       <div class="matches-scroll" id="matches-row">
         <div class="matches-empty">Loading matches…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Top Performers: Goals / Assists / Rating ── -->
+  <div class="card" id="section-top-performers">
+    <div class="card-header">
+      <div class="icon">🏆</div>
+      <div>
+        <h2>Top Performers</h2>
+        <p>Live leaderboards for goals, assists, and player ratings</p>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="lb-tabs">
+        <button class="lb-tab-btn active" onclick="switchLbTab('goals', this)">⚽ Goals</button>
+        <button class="lb-tab-btn" onclick="switchLbTab('assists', this)">🎯 Assists</button>
+        <button class="lb-tab-btn" onclick="switchLbTab('rating', this)">⭐ Rating</button>
+      </div>
+      <div class="lb-spinner" id="lb-spinner"></div>
+      <div class="table-wrap">
+        <table class="lb-table">
+          <thead>
+            <tr>
+              <th class="lb-rank">#</th>
+              <th>Player</th>
+              <th>Team</th>
+              <th id="lb-value-header" style="text-align:right">Goals</th>
+            </tr>
+          </thead>
+          <tbody id="lb-tbody">
+            <tr><td colspan="4"><div class="lb-empty">Loading…</div></td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -1134,6 +1235,7 @@
           break;
         case 'reload_charts':
           loadCharts();
+          loadLeaderboard(_lbStat);
           break;
         case 'reload_matches':
           loadMatches();
@@ -1805,6 +1907,7 @@
       loadTeams();
       loadCharts();
       loadMatches();
+      loadLeaderboard(_lbStat);
       const depthTeam = document.getElementById('depth-team-input').value.trim() || 'England';
       loadDepthChart(depthTeam);
     } catch (err) {
@@ -1815,11 +1918,66 @@
     }
   }
 
+  // ── Top Performers Leaderboard ────────────────────────────────────────────
+
+  let _lbStat = 'goals';
+
+  function switchLbTab(stat, btnEl) {
+    _lbStat = stat;
+    document.querySelectorAll('.lb-tab-btn').forEach(b => b.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
+    loadLeaderboard(stat);
+  }
+
+  async function loadLeaderboard(stat) {
+    stat = stat || _lbStat;
+    const spinner = document.getElementById('lb-spinner');
+    const tbody   = document.getElementById('lb-tbody');
+    const hdr     = document.getElementById('lb-value-header');
+    if (spinner) spinner.classList.add('visible');
+    if (hdr) {
+      hdr.textContent = stat === 'goals' ? 'Goals' : stat === 'assists' ? 'Assists' : 'Rating';
+    }
+    try {
+      const res = await fetch(`${API}/leaderboard?stat=${encodeURIComponent(stat)}&limit=10`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const players = data.players || [];
+      if (!players.length) {
+        if (tbody) tbody.innerHTML =
+          '<tr><td colspan="4"><div class="lb-empty">No data yet — refresh scouting data to load top performers</div></td></tr>';
+        return;
+      }
+      const medals = ['🥇', '🥈', '🥉'];
+      tbody.innerHTML = players.map((p, i) => {
+        const rankDisplay = i < 3
+          ? medals[i]
+          : `<span style="color:var(--muted);font-size:12px">${i + 1}</span>`;
+        let value;
+        if (stat === 'goals')   value = `${p.goals   ?? '—'} goals`;
+        else if (stat === 'assists') value = `${p.assists ?? '—'} assists`;
+        else value = `${p.rating != null ? Number(p.rating).toFixed(2) : '—'} ⭐`;
+        return `<tr>
+          <td class="lb-rank">${rankDisplay}</td>
+          <td class="lb-player">${p.player_name || '—'}</td>
+          <td class="lb-team">${p.team_name || '—'}</td>
+          <td>${value}</td>
+        </tr>`;
+      }).join('');
+    } catch (err) {
+      if (tbody) tbody.innerHTML =
+        `<tr><td colspan="4"><div class="lb-empty">⚠ ${err.message}</div></td></tr>`;
+    } finally {
+      if (spinner) spinner.classList.remove('visible');
+    }
+  }
+
   // ── Boot ──────────────────────────────────────────────────────────────────
   loadMatches();
   loadTeams();
   loadCharts();
   loadDepthChart("England");
+  loadLeaderboard('goals');
 </script>
 </body>
 </html>
