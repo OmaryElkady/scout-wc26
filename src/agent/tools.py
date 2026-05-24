@@ -349,35 +349,91 @@ def get_league_overview() -> dict[str, Any]:
     }
 
 
+def _direct_api_ingest() -> None:
+    """Write fresh fixture and squad data to Bronze tables via the football API.
+
+    Mirrors the per-team pattern used by scripts/ingest_all_players.py so each
+    squad is written via write_bronze_team_squads(), which dual-writes to both
+    bronze_team_squads and bronze_players with proper field mapping.
+    """
+    from src.ingestion.bq_loader import write_bronze_fixtures, write_bronze_team_squads
+    from src.utils.football_api import football_api
+
+    logger.info("Syncing latest football data directly from API...")
+    fixtures = football_api.get_world_cup_fixtures()
+    write_bronze_fixtures(fixtures)
+
+    teams: dict[int, str] = {}
+    for match in fixtures:
+        for side in ("home", "away"):
+            side_data = match.get(side, {})
+            if isinstance(side_data, dict) and side_data.get("id"):
+                tid = int(side_data["id"])
+                if tid not in teams:
+                    teams[tid] = side_data.get("name", str(tid))
+
+    logger.info("Direct API ingest: %d teams found in fixtures", len(teams))
+    for team_id, team_name in teams.items():
+        players = football_api.get_players_by_team(team_id)
+        write_bronze_team_squads(team_id, players, team_name=team_name)
+    logger.info("Direct API ingest: complete")
+
+
 def refresh_scouting_data() -> dict[str, Any]:
     """
-    Triggers a full data refresh: syncs latest football data from the API via
-    Fivetran, then reruns the Bronze→Silver→Gold pipeline. Use this when the
+    Triggers a full data refresh: syncs latest football data via Fivetran
+    (preferred) or falls back to direct football API ingestion if Fivetran is
+    unavailable, then reruns the Bronze→Silver→Gold pipeline. Use this when the
     user asks to update, refresh, or sync the scouting data. Returns a status
-    dict with steps completed.
+    dict with steps completed and the sync method used.
     """
     from src.ingestion.fivetran_trigger import poll_sync_status, trigger_sync
     from src.pipeline.transform import run_all
+
+    sync_method = "fivetran"
+    sync_triggered = False
 
     try:
         logger.info("refresh_scouting_data: triggering Fivetran sync")
         trigger_sync()
         poll_sync_status(timeout_seconds=120)
-        logger.info("refresh_scouting_data: sync complete, running pipeline")
+        sync_triggered = True
+        logger.info("refresh_scouting_data: Fivetran sync complete")
     except Exception as exc:
-        logger.error("refresh_scouting_data: sync step failed: %s", exc)
-        return {"status": "error", "message": str(exc), "step_failed": "sync"}
+        logger.warning(
+            "refresh_scouting_data: Fivetran unavailable (%s), falling back to direct API",
+            exc,
+        )
+        sync_method = "direct_api"
+        try:
+            _direct_api_ingest()
+            sync_triggered = True
+        except Exception as api_exc:
+            logger.error("refresh_scouting_data: direct API fallback failed: %s", api_exc)
+            return {
+                "status": "error",
+                "message": "Syncing latest football data directly from API...",
+                "step_failed": "sync",
+                "sync_method": sync_method,
+            }
 
     try:
         run_all()
         logger.info("refresh_scouting_data: pipeline complete")
     except Exception as exc:
         logger.error("refresh_scouting_data: pipeline step failed: %s", exc)
-        return {"status": "error", "message": str(exc), "step_failed": "pipeline"}
+        return {
+            "status": "error",
+            "message": str(exc),
+            "step_failed": "pipeline",
+            "sync_triggered": sync_triggered,
+            "sync_method": sync_method,
+        }
 
     return {
         "status": "complete",
-        "sync_triggered": True,
+        "sync_triggered": sync_triggered,
+        "sync_method": sync_method,
         "pipeline_rerun": True,
-        "message": "Scouting data refreshed successfully",
+        "message": f"Data refreshed via {sync_method}",
     }
