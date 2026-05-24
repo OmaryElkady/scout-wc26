@@ -434,6 +434,55 @@
     }
     .header-spinner.visible { display: inline-block; }
 
+    /* ── Progress Panel ── */
+    .progress-panel {
+      display: none;
+      margin-top: 16px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .progress-panel.visible { display: block; }
+    .progress-bar-track {
+      width: 100%;
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      margin-bottom: 12px;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--primary) 0%, #79b8ff 100%);
+      border-radius: 2px;
+      width: 0%;
+      transition: width .4s ease;
+    }
+    .step-list { display: flex; flex-direction: column; gap: 5px; }
+    .step-row  { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+    .step-icon { width: 16px; text-align: center; flex-shrink: 0; }
+    .step-spin { display: inline-block; animation: spin .7s linear infinite; color: var(--primary); }
+    .step-text.pending { color: var(--muted); }
+    .step-text.running { color: #fff; font-weight: 500; }
+    .step-text.done    { color: var(--muted); }
+    .step-text.error   { color: var(--red); }
+
+    /* ── Capability Chips (agent section) ── */
+    .capability-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+
+    /* ── Chart fade-in ── */
+    @keyframes fadeInChart {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .chart-fade { animation: fadeInChart .45s ease forwards; }
+
     /* ── League Selector ── */
     .league-selector {
       display: flex;
@@ -538,16 +587,24 @@
     </div>
   </div>
 
-  <!-- ── Section 1: Natural Language Query ── -->
-  <div class="card">
+  <!-- ── Section 1: Scout Agent ── -->
+  <div class="card" id="section-agent">
     <div class="card-header">
-      <div class="icon">🔍</div>
+      <div class="icon">🤖</div>
       <div>
-        <h2>Scouting Query</h2>
-        <p>Ask anything about players, teams, or match performance</p>
+        <h2>Scout Agent</h2>
+        <p>Ask questions, switch leagues, refresh data, generate charts, and control this dashboard</p>
       </div>
     </div>
     <div class="card-body">
+      <div class="capability-chips">
+        <span class="prompt-chip" onclick="fillQuery(this)">🔍 Who are the best midfielders?</span>
+        <span class="prompt-chip" onclick="fillQuery(this)">🔄 Refresh the scouting data</span>
+        <span class="prompt-chip" onclick="fillQuery(this)">🏆 Switch to Premier League</span>
+        <span class="prompt-chip" onclick="fillQuery(this)">📊 Create a chart of top scorers</span>
+        <span class="prompt-chip" onclick="fillQuery(this)">📋 Generate Bellingham's scouting report</span>
+        <span class="prompt-chip" onclick="fillQuery(this)">⚽ Show me the England squad</span>
+      </div>
       <div class="input-row">
         <input
           type="text"
@@ -557,12 +614,18 @@
         <button id="query-btn" onclick="submitQuery()">Ask Agent</button>
       </div>
       <div class="spinner" id="query-spinner"></div>
+      <div class="progress-panel" id="progress-panel">
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill" id="progress-bar-fill"></div>
+        </div>
+        <div class="step-list" id="progress-steps"></div>
+      </div>
       <div class="answer-box" id="query-answer"></div>
     </div>
   </div>
 
   <!-- ── Section 2: Player Scouting Report ── -->
-  <div class="card">
+  <div class="card" id="section-reports">
     <div class="card-header">
       <div class="icon">📋</div>
       <div>
@@ -604,7 +667,7 @@
   </div>
 
   <!-- ── Section 3: Team Browser ── -->
-  <div class="card">
+  <div class="card" id="section-teams">
     <div class="card-header">
       <div class="icon">🏆</div>
       <div>
@@ -629,7 +692,7 @@
   </div>
 
   <!-- ── Section 4: Analytics Dashboard ── -->
-  <div class="card">
+  <div class="card" id="section-analytics">
     <div class="card-header">
       <div class="icon">📊</div>
       <div>
@@ -745,11 +808,102 @@
     el.className = "answer-box error visible";
   }
 
-  // ── Section 1: Query ───────────────────────────────────────────────────────
+  // ── Section 1: Scout Agent ─────────────────────────────────────────────────
 
   document.getElementById("query-input").addEventListener("keydown", e => {
     if (e.key === "Enter") submitQuery();
   });
+
+  function fillQuery(chipEl) {
+    document.getElementById("query-input").value = chipEl.textContent.trim();
+    submitQuery();
+  }
+
+  // ── Progress stream ────────────────────────────────────────────────────────
+
+  let _progressSteps = [];
+  let _activeProgressSource = null;
+
+  function _openProgressStream() {
+    if (_activeProgressSource) { _activeProgressSource.close(); _activeProgressSource = null; }
+
+    _progressSteps = [];
+    const panel   = document.getElementById('progress-panel');
+    const stepsEl = document.getElementById('progress-steps');
+    const barFill = document.getElementById('progress-bar-fill');
+    if (stepsEl) stepsEl.innerHTML = '';
+    if (barFill) barFill.style.width = '0%';
+
+    let hasEvents  = false;
+    let fadeHandle = null;
+
+    // Auto-close if no real events within 5 s (simple factual query)
+    const noEventTimer = setTimeout(() => {
+      if (!hasEvents) { es.close(); _activeProgressSource = null; }
+    }, 5000);
+
+    const es = new EventSource(`${API}/stream/progress`);
+    _activeProgressSource = es;
+
+    es.onmessage = evt => {
+      try {
+        const event = JSON.parse(evt.data);
+        if (event.keepalive) return;
+
+        if (!hasEvents) {
+          hasEvents = true;
+          clearTimeout(noEventTimer);
+          if (panel) { panel.style.opacity = '1'; panel.style.transition = ''; panel.classList.add('visible'); }
+        }
+
+        if (barFill) barFill.style.width = event.progress + '%';
+        _progressSteps.push(event);
+        _renderProgressSteps();
+
+        if (event.progress >= 100) {
+          es.close();
+          _activeProgressSource = null;
+          fadeHandle = setTimeout(() => {
+            if (panel) {
+              panel.style.transition = 'opacity .9s';
+              panel.style.opacity = '0';
+              setTimeout(() => {
+                panel.classList.remove('visible');
+                panel.style.transition = '';
+                panel.style.opacity = '1';
+              }, 900);
+            }
+          }, 3000);
+        }
+      } catch {}
+    };
+
+    es.onerror = () => { clearTimeout(noEventTimer); es.close(); _activeProgressSource = null; };
+
+    return {
+      close() {
+        clearTimeout(noEventTimer);
+        if (fadeHandle) clearTimeout(fadeHandle);
+        es.close();
+        _activeProgressSource = null;
+      }
+    };
+  }
+
+  function _renderProgressSteps() {
+    const el = document.getElementById('progress-steps');
+    if (!el) return;
+    el.innerHTML = _progressSteps.map((s, i) => {
+      const isLast  = i === _progressSteps.length - 1;
+      const isError = s.status === 'error';
+      const isDone  = !isError && (!isLast || s.status === 'done' || s.progress >= 100);
+      let icon = '', cls = '';
+      if (isError)      { icon = '<span style="color:var(--red)">✗</span>';  cls = 'error'; }
+      else if (isDone)  { icon = '<span style="color:var(--green)">✓</span>'; cls = 'done'; }
+      else              { icon = '<span class="step-spin">⟳</span>';          cls = 'running'; }
+      return `<div class="step-row"><span class="step-icon">${icon}</span><span class="step-text ${cls}">${s.step}</span></div>`;
+    }).join('');
+  }
 
   async function submitQuery() {
     const q = document.getElementById("query-input").value.trim();
@@ -759,6 +913,8 @@
     box.className = "answer-box";
     box.textContent = "";
     setLoading("query-spinner", "query-btn", true);
+
+    _openProgressStream();
 
     try {
       const res = await fetch(`${API}/query`, {
@@ -770,10 +926,75 @@
       const data = await res.json();
       box.textContent = data.answer;
       box.className = "answer-box visible";
+      if (data.page_actions && data.page_actions.length > 0) {
+        await _executePageActions(data.page_actions);
+      }
     } catch (err) {
       showError("query-answer", err.message || "Failed to reach the API");
     } finally {
       setLoading("query-spinner", "query-btn", false);
+    }
+  }
+
+  // ── Page Actions ───────────────────────────────────────────────────────────
+
+  async function _executePageActions(actions) {
+    for (const action of actions) {
+      switch (action.action) {
+        case 'reload_teams':
+          await loadTeams();
+          break;
+        case 'reload_charts':
+          loadCharts();
+          break;
+        case 'reload_matches':
+          loadMatches();
+          break;
+        case 'update_league_selector': {
+          const sel = document.getElementById('league-select');
+          if (sel && action.value) {
+            for (const opt of sel.options) {
+              const txt = opt.textContent.replace(/ \(Coming.*\)$/, '').trim();
+              if (txt.toLowerCase() === action.value.toLowerCase() ||
+                  String(opt.value) === String(action.value)) {
+                sel.value = opt.value;
+                break;
+              }
+            }
+          }
+          break;
+        }
+        case 'navigate_to_section': {
+          const idMap = { charts: 'section-analytics', reports: 'section-reports', teams: 'section-teams', agent: 'section-agent' };
+          const el = document.getElementById(idMap[action.section] || action.section);
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          break;
+        }
+        case 'fill_chart_input': {
+          const el = document.getElementById('section-analytics');
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          await new Promise(r => setTimeout(r, 600));
+          const input = document.getElementById('ai-chart-input');
+          if (input && action.text) {
+            await _typewriter(input, action.text, 45);
+            await new Promise(r => setTimeout(r, 500));
+            generateAiChart();
+          }
+          break;
+        }
+        case 'show_toast':
+          _showToast(action.message || '', action.type || 'info');
+          break;
+      }
+    }
+  }
+
+  async function _typewriter(inputEl, text, msPerChar = 45) {
+    inputEl.value = '';
+    inputEl.focus();
+    for (const ch of text) {
+      inputEl.value += ch;
+      await new Promise(r => setTimeout(r, msPerChar));
     }
   }
 
@@ -943,6 +1164,7 @@
         responsive: true,
         maintainAspectRatio: false,
         indexAxis,
+        animation: { duration: 500, easing: "easeOutQuart" },
         plugins: {
           legend: {
             display: isDoughnut,
@@ -955,6 +1177,11 @@
         },
       },
     });
+
+    // Fade-in the canvas
+    canvas.classList.remove("chart-fade");
+    void canvas.offsetWidth; // trigger reflow
+    canvas.classList.add("chart-fade");
   }
 
   // Restore a canvas inside a wrap div (needed after an error div replaced it).
@@ -1214,14 +1441,15 @@
 
   // ── League Selector ───────────────────────────────────────────────────────
 
-  function _showToast(msg, isError = false) {
+  function _showToast(msg, type = 'info') {
     const el = document.getElementById('league-toast');
     if (!el) return;
     el.textContent = msg;
-    el.style.borderColor = isError ? 'var(--red)' : 'var(--primary)';
-    el.style.color = isError ? 'var(--red)' : 'var(--primary)';
+    const c = type === 'success' ? 'var(--green)' : type === 'error' ? 'var(--red)' : 'var(--primary)';
+    el.style.borderColor = c;
+    el.style.color = c;
     el.classList.add('show');
-    setTimeout(() => el.classList.remove('show'), 3000);
+    setTimeout(() => el.classList.remove('show'), 3500);
   }
 
   async function switchLeague(selectEl) {
@@ -1232,7 +1460,9 @@
     const spinner = document.getElementById('header-spinner');
     selectEl.disabled = true;
     if (spinner) spinner.classList.add('visible');
-    _showToast(`Switching to ${leagueName}…`);
+    _showToast(`Switching to ${leagueName}…`, 'info');
+
+    const progressHandle = _openProgressStream();
 
     try {
       const res = await fetch(`${API}/admin/switch-league`, {
@@ -1241,14 +1471,14 @@
         body: JSON.stringify({ league_id: leagueId, league_name: leagueName }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      _showToast(`✓ Switched to ${leagueName}. Refreshing data…`);
+      _showToast(`✓ Switched to ${leagueName}. Refreshing data…`, 'success');
       loadTeams();
       loadCharts();
       loadMatches();
       const depthTeam = document.getElementById('depth-team-input').value.trim() || 'England';
       loadDepthChart(depthTeam);
     } catch (err) {
-      _showToast(`⚠ Switch failed: ${err.message}`, true);
+      _showToast(`⚠ Switch failed: ${err.message}`, 'error');
     } finally {
       selectEl.disabled = false;
       if (spinner) spinner.classList.remove('visible');
