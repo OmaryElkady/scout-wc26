@@ -42,6 +42,7 @@ class Config:
         self.RAPIDAPI_HOST: str = os.environ["RAPIDAPI_HOST"]
         self.LOG_LEVEL: str = os.environ.get("LOG_LEVEL", "INFO")
         self.API_PORT: int = int(os.environ.get("API_PORT", "8000"))
+        self.LEAGUE_ID: int = int(os.environ.get("LEAGUE_ID", "10195"))
 
     def table(self, table_name: str) -> str:
         """Return the fully-qualified BigQuery table ID for the given table name."""
