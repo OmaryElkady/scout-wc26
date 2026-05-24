@@ -531,19 +531,16 @@ def admin_leagues() -> dict:
 
 @app.post("/admin/switch-league")
 def admin_switch_league(body: SwitchLeagueRequest) -> dict:
-    import src.utils.football_api as _fa_mod
-
     logger.info("POST /admin/switch-league: id=%d name=%s", body.league_id, body.league_name)
-    _fa_mod._WORLD_CUP_LEAGUE_ID = body.league_id
     _active_league["id"] = body.league_id
     _active_league["name"] = body.league_name
 
-    refresh_result = agent_tools.refresh_scouting_data()
+    result = agent_tools.switch_league(body.league_name)
     return {
         "status": "switched",
         "league": body.league_name,
         "league_id": body.league_id,
-        "refresh": refresh_result,
+        "refresh": result,
     }
 
 
