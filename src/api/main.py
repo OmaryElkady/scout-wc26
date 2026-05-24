@@ -1,11 +1,15 @@
+import asyncio
+import json
 import logging
 import os
 import pathlib
+import queue as _stdlib_queue
+import re
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from src.agent import scout_agent
 from src.agent import tools as agent_tools
@@ -56,6 +60,78 @@ _DEMO_HTML = pathlib.Path(__file__).parent.parent.parent / "docs" / "demo.html"
 # In-memory active league state (session-scoped; resets on container restart).
 _active_league: dict = {"id": config.LEAGUE_ID, "name": "FIFA World Cup Qualification UEFA"}
 
+_KNOWN_LEAGUES_FOR_ACTIONS: dict[str, str] = {
+    "premier league": "Premier League",
+    "epl": "Premier League",
+    "champions league": "Champions League",
+    "ucl": "Champions League",
+    "la liga": "La Liga",
+    "bundesliga": "Bundesliga",
+    "serie a": "Serie A",
+    "ligue 1": "Ligue 1",
+    "world cup 2026": "World Cup 2026",
+    "world cup": "World Cup 2026",
+    "qualification": "UEFA WC Qualification",
+    "wc qualification": "UEFA WC Qualification",
+}
+
+
+def _infer_page_actions(question: str, answer: str) -> list[dict]:
+    actions: list[dict] = []
+    q = question.lower()
+    a = answer.lower()
+    combined = q + " " + a
+
+    switch_q = any(
+        w in q
+        for w in ("switch", "change league", "change to", "go to", "swap to", "move to", "use premier", "use champions", "use la liga", "use bundesliga")
+    )
+    switched_a = any(
+        w in a
+        for w in ("switched to", "switching to", "now active", "league switched", "active league is now", "successfully switched")
+    )
+
+    if switch_q or switched_a:
+        matched_league = None
+        for key, display in _KNOWN_LEAGUES_FOR_ACTIONS.items():
+            if key in combined:
+                matched_league = display
+                break
+        actions += [
+            {"action": "reload_teams"},
+            {"action": "reload_charts"},
+            {"action": "reload_matches"},
+        ]
+        if matched_league:
+            actions.append({"action": "update_league_selector", "value": matched_league})
+        actions.append({"action": "show_toast", "message": "✓ League switched — data refreshed!", "type": "success"})
+
+    elif any(w in q for w in ("refresh", "sync", "update data", "get latest", "pull latest")):
+        actions += [
+            {"action": "reload_teams"},
+            {"action": "reload_charts"},
+            {"action": "reload_matches"},
+            {"action": "show_toast", "message": "✓ Data refreshed!", "type": "success"},
+        ]
+
+    chart_q = any(w in q for w in ("chart", "graph", "visuali", "plot"))
+    if chart_q and any(w in q for w in ("create", "make", "show", "generate", "build")):
+        actions.append({"action": "navigate_to_section", "section": "charts"})
+        chart_text = re.sub(
+            r"^(create|make|generate|build|show)\s+(a\s+|me\s+a\s+|me\s+)?chart\s+(of\s+|showing\s+|for\s+)?",
+            "",
+            q,
+        ).strip() or question
+        actions.append({"action": "fill_chart_input", "text": chart_text})
+
+    if any(w in q for w in ("report", "scouting report")) and any(
+        w in a for w in ("assessment", "report", "position", "nationality", "age")
+    ):
+        actions.append({"action": "navigate_to_section", "section": "reports"})
+
+    return actions
+
+
 app = FastAPI(title="Scout WC26", description="AI scouting agent for the 2026 FIFA World Cup")
 
 app.add_middleware(
@@ -76,11 +152,46 @@ def health() -> dict:
     return {"status": "ok", "model": _MODEL, "dataset": config.BQ_DATASET}
 
 
+@app.get("/stream/progress")
+async def stream_progress() -> StreamingResponse:
+    from src.utils.progress import subscribe, unsubscribe
+
+    subscriber_q = subscribe()
+
+    async def event_generator():
+        start = asyncio.get_event_loop().time()
+        MAX_DURATION = 300.0
+        try:
+            yield "data: {\"keepalive\": true}\n\n"
+            while True:
+                if asyncio.get_event_loop().time() - start > MAX_DURATION:
+                    break
+                try:
+                    event = subscriber_q.get_nowait()
+                    yield f"data: {json.dumps(event)}\n\n"
+                    if event.get("progress", 0) >= 100:
+                        break
+                except _stdlib_queue.Empty:
+                    await asyncio.sleep(0.15)
+                    yield ": keepalive\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            unsubscribe(subscriber_q)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.post("/query", response_model=QueryResponse)
 def query(request: QueryRequest) -> QueryResponse:
     logger.info("POST /query: question=%r", request.question)
     answer = scout_agent.run_query(request.question)
-    return QueryResponse(answer=answer, question=request.question)
+    page_actions = _infer_page_actions(request.question, answer)
+    return QueryResponse(answer=answer, question=request.question, page_actions=page_actions)
 
 
 @app.post("/adk/query", response_model=QueryResponse)
