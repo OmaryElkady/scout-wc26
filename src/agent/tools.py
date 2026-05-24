@@ -3,6 +3,7 @@ from typing import Any, Optional
 
 from src.utils.bq_client import bq
 from src.utils.config import config
+from src.utils.progress import emit_progress
 
 logger = logging.getLogger(__name__)
 
@@ -397,6 +398,8 @@ def switch_league(league_name: str) -> dict[str, Any]:
     from src.pipeline.transform import run_all
     from src.utils.football_api import football_api
 
+    emit_progress(f"🔍 Finding league: {league_name}", "running", 10)
+
     query = league_name.strip().lower()
     league_id: Optional[int] = None
     matched_name = league_name
@@ -427,6 +430,7 @@ def switch_league(league_name: str) -> dict[str, Any]:
             logger.warning("switch_league: API search failed: %s", exc)
 
     if league_id is None:
+        emit_progress(f"❌ League not found: {league_name}", "error", 100)
         return {
             "status": "error",
             "message": (
@@ -439,9 +443,10 @@ def switch_league(league_name: str) -> dict[str, Any]:
     _fa_mod._WORLD_CUP_LEAGUE_ID = league_id
 
     try:
-        _direct_api_ingest()
+        _direct_api_ingest(_emit=emit_progress)
     except Exception as exc:
         logger.error("switch_league: data ingest failed: %s", exc)
+        emit_progress("❌ Data ingest failed", "error", 100)
         return {
             "status": "error",
             "league_name": matched_name,
@@ -449,16 +454,22 @@ def switch_league(league_name: str) -> dict[str, Any]:
             "message": f"Switched league ID but data refresh failed: {exc}",
         }
 
+    emit_progress("⚙️ Running Silver transforms...", "running", 75)
+
     try:
         run_all()
     except Exception as exc:
         logger.error("switch_league: pipeline failed: %s", exc)
+        emit_progress("❌ Pipeline failed", "error", 100)
         return {
             "status": "partial",
             "league_name": matched_name,
             "league_id": league_id,
             "message": f"League switched and data ingested, but pipeline rebuild failed: {exc}",
         }
+
+    emit_progress("🏆 Building Gold tables...", "done", 90)
+    emit_progress(f"✅ Switch complete: {matched_name}", "done", 100)
 
     return {
         "status": "switched",
@@ -468,17 +479,24 @@ def switch_league(league_name: str) -> dict[str, Any]:
     }
 
 
-def _direct_api_ingest() -> None:
+def _direct_api_ingest(_emit=None) -> None:
     """Write fresh fixture and squad data to Bronze tables via the football API.
 
     Mirrors the per-team pattern used by scripts/ingest_all_players.py so each
     squad is written via write_bronze_team_squads(), which dual-writes to both
     bronze_team_squads and bronze_players with proper field mapping.
+
+    _emit: optional callable(step, status, progress) for progress reporting.
     """
     from src.ingestion.bq_loader import write_bronze_fixtures, write_bronze_team_squads
     from src.utils.football_api import football_api
 
+    def _p(step: str, status: str, pct: int) -> None:
+        if _emit is not None:
+            _emit(step, status, pct)
+
     logger.info("Syncing latest football data directly from API...")
+    _p("📡 Fetching fixtures from API...", "running", 25)
     fixtures = football_api.get_world_cup_fixtures()
     write_bronze_fixtures(fixtures)
 
@@ -492,9 +510,11 @@ def _direct_api_ingest() -> None:
                     teams[tid] = side_data.get("name", str(tid))
 
     logger.info("Direct API ingest: %d teams found in fixtures", len(teams))
+    _p("👥 Fetching player squads...", "running", 45)
     for team_id, team_name in teams.items():
         players = football_api.get_players_by_team(team_id)
         write_bronze_team_squads(team_id, players, team_name=team_name)
+    _p("💾 Writing to BigQuery Bronze...", "done", 60)
     logger.info("Direct API ingest: complete")
 
 
@@ -512,9 +532,12 @@ def refresh_scouting_data() -> dict[str, Any]:
     sync_method = "fivetran"
     sync_triggered = False
 
+    emit_progress("🔄 Triggering Fivetran sync...", "running", 15)
+
     try:
         logger.info("refresh_scouting_data: triggering Fivetran sync")
         trigger_sync()
+        emit_progress("⏳ Waiting for sync to complete...", "running", 30)
         poll_sync_status(timeout_seconds=120)
         sync_triggered = True
         logger.info("refresh_scouting_data: Fivetran sync complete")
@@ -524,11 +547,14 @@ def refresh_scouting_data() -> dict[str, Any]:
             exc,
         )
         sync_method = "direct_api"
+        emit_progress("📡 Pulling latest data from API...", "running", 50)
         try:
             _direct_api_ingest()
+            emit_progress("💾 Writing to BigQuery Bronze...", "done", 65)
             sync_triggered = True
         except Exception as api_exc:
             logger.error("refresh_scouting_data: direct API fallback failed: %s", api_exc)
+            emit_progress("❌ Data sync failed", "error", 100)
             return {
                 "status": "error",
                 "message": "Syncing latest football data directly from API...",
@@ -536,11 +562,14 @@ def refresh_scouting_data() -> dict[str, Any]:
                 "sync_method": sync_method,
             }
 
+    emit_progress("⚙️ Running pipeline transforms...", "running", 85)
+
     try:
         run_all()
         logger.info("refresh_scouting_data: pipeline complete")
     except Exception as exc:
         logger.error("refresh_scouting_data: pipeline step failed: %s", exc)
+        emit_progress("❌ Pipeline failed", "error", 100)
         return {
             "status": "error",
             "message": str(exc),
@@ -548,6 +577,8 @@ def refresh_scouting_data() -> dict[str, Any]:
             "sync_triggered": sync_triggered,
             "sync_method": sync_method,
         }
+
+    emit_progress("✅ Data refresh complete", "done", 100)
 
     return {
         "status": "complete",
