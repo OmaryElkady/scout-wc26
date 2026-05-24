@@ -356,58 +356,83 @@
     }
     .chart-info-box.visible { display: block; }
 
-    /* ── Live / Upcoming Ticker ── */
-    .ticker-banner {
-      background: var(--bg);
-      border-bottom: 1px solid var(--border);
-      overflow: hidden;
-      height: 44px;
-      display: flex;
-      align-items: center;
+    /* ── WC Countdown Bar ── */
+    #wc-countdown-bar {
+      width: 100%;
+      background: linear-gradient(90deg, #1a1a2e 0%, #16213e 50%, #1a1a2e 100%);
+      border-bottom: 2px solid #FFD700;
+      padding: 10px 0;
+      text-align: center;
       position: sticky;
       top: 0;
-      z-index: 100;
+      z-index: 101;
     }
-    .ticker-track {
-      display: inline-flex;
-      align-items: center;
-      white-space: nowrap;
-      animation: ticker-scroll 60s linear infinite;
-      will-change: transform;
+
+    /* ── Live / Upcoming Matches Section ── */
+    .matches-scroll {
+      display: flex;
+      overflow-x: auto;
+      gap: 12px;
+      padding: 4px 0 8px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
     }
-    .ticker-banner:hover .ticker-track { animation-play-state: paused; }
-    @keyframes ticker-scroll {
-      0%   { transform: translateX(0); }
-      100% { transform: translateX(-50%); }
-    }
-    .ticker-card {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 0 18px;
+    .matches-scroll::-webkit-scrollbar { height: 4px; }
+    .matches-scroll::-webkit-scrollbar-track { background: transparent; }
+    .matches-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    .match-card {
       flex-shrink: 0;
+      width: 200px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      transition: border-color .15s;
     }
-    .ticker-sep {
-      width: 1px;
-      height: 18px;
-      background: var(--border);
-      flex-shrink: 0;
-    }
-    .ticker-badge {
+    .match-card.live     { border-color: var(--green); }
+    .match-card.upcoming { border-color: var(--primary); }
+    .match-comp {
       font-size: 10px;
       font-weight: 700;
-      padding: 2px 6px;
-      border-radius: 4px;
-      letter-spacing: 0.4px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .match-comp.live     { color: var(--red); }
+    .match-comp.upcoming { color: var(--primary); }
+    .match-teams {
+      font-size: 13px;
+      color: #fff;
+      line-height: 1.45;
+      margin-bottom: 6px;
+      word-break: break-word;
+    }
+    .match-teams .score {
+      font-weight: 700;
+      color: var(--green);
+    }
+    .match-when {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .match-when.live-indicator { color: var(--red); font-weight: 600; }
+    .matches-empty {
+      color: var(--muted);
+      font-size: 14px;
+      padding: 16px 0;
+    }
+
+    /* ── Header Spinner ── */
+    .header-spinner {
+      display: none;
+      width: 14px; height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
       flex-shrink: 0;
     }
-    .ticker-badge.live     { background: rgba(248,81,73,.15); color: var(--red);     border: 1px solid rgba(248,81,73,.3);  }
-    .ticker-badge.upcoming { background: rgba(88,166,255,.1);  color: var(--primary); border: 1px solid rgba(88,166,255,.25); }
-    .ticker-match          { font-size: 13px; color: var(--text); }
-    .ticker-match strong   { color: #fff; }
-    .ticker-time           { font-size: 12px; color: var(--muted); }
-    .ticker-countdown .ticker-match         { color: var(--yellow); }
-    .ticker-countdown .ticker-match strong  { color: #fff; }
+    .header-spinner.visible { display: inline-block; }
 
     /* ── League Selector ── */
     .league-selector {
@@ -461,13 +486,15 @@
 </head>
 <body>
 
-<!-- ── Live / Upcoming Ticker ── -->
-<div class="ticker-banner" id="ticker-banner">
-  <div class="ticker-track" id="ticker-track">
-    <div class="ticker-card">
-      <span class="ticker-match" style="color:var(--muted)">Loading match data…</span>
-    </div>
-  </div>
+<!-- ── WC Countdown Bar ── -->
+<div id="wc-countdown-bar">
+  <span style="color:#FFD700;font-weight:bold;font-size:16px;">
+    ⚽ FIFA WORLD CUP 2026 STARTS IN <span id="wc-days">18</span> DAYS
+  </span>
+  <span style="color:#555;margin:0 20px;">|</span>
+  <span style="color:#aaa;font-size:14px;">June 11, 2026 · USA, Canada &amp; Mexico</span>
+  <span style="color:#555;margin:0 20px;">|</span>
+  <span style="color:#4CAF50;font-size:14px;">🔄 Scout WC26 ready for live data on day 1</span>
 </div>
 
 <header>
@@ -478,9 +505,14 @@
   </div>
   <div class="league-selector">
     <span class="league-label">Active League:</span>
-    <select class="league-select" id="league-select" onchange="switchLeague(this)" disabled>
-      <option value="">Loading…</option>
+    <select class="league-select" id="league-select" onchange="switchLeague(this)">
+      <option value="10195" selected>UEFA WC Qualification</option>
+      <option value="77">World Cup 2026 (Coming Jun 11)</option>
+      <option value="47">Premier League</option>
+      <option value="42">Champions League</option>
+      <option value="140">La Liga</option>
     </select>
+    <span class="header-spinner" id="header-spinner"></span>
   </div>
   <div class="badge">Gemini 2.5 Flash · BigQuery</div>
 </header>
@@ -488,6 +520,23 @@
 <div class="league-switch-toast" id="league-toast"></div>
 
 <main>
+
+  <!-- ── Matches Section: Live & Upcoming ── -->
+  <div class="card" id="matches-card">
+    <div class="card-header">
+      <div class="icon">📅</div>
+      <div>
+        <h2>Upcoming Matches &amp; Live Scores</h2>
+        <p>Live scores and fixtures for the active league</p>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="spinner" id="matches-spinner"></div>
+      <div class="matches-scroll" id="matches-row">
+        <div class="matches-empty">Loading matches…</div>
+      </div>
+    </div>
+  </div>
 
   <!-- ── Section 1: Natural Language Query ── -->
   <div class="card">
@@ -1074,7 +1123,22 @@
     }
   }
 
-  // ── Ticker Banner ──────────────────────────────────────────────────────────
+  // ── WC Countdown Bar ──────────────────────────────────────────────────────
+
+  (function initCountdownBar() {
+    const bar = document.getElementById('wc-countdown-bar');
+    const daysEl = document.getElementById('wc-days');
+    const WC = new Date('2026-06-11T00:00:00');
+    const now = new Date();
+    if (now >= WC) {
+      if (bar) bar.style.display = 'none';
+      return;
+    }
+    const days = Math.ceil((WC - now) / 86400000);
+    if (daysEl) daysEl.textContent = days;
+  })();
+
+  // ── Matches Section ────────────────────────────────────────────────────────
 
   function _fmtMatchDate(dateStr, timeStr) {
     if (!dateStr) return timeStr || '';
@@ -1082,122 +1146,92 @@
       const d = new Date(dateStr);
       const label = d.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
       return timeStr ? `${label} · ${timeStr}` : label;
-    } catch { return (dateStr + (timeStr ? ' ' + timeStr : '')).trim(); }
+    } catch { return (dateStr + (timeStr ? ' · ' + timeStr : '')).trim(); }
   }
 
-  function _renderTicker(live, upcoming) {
-    const track = document.getElementById('ticker-track');
-    if (!track) return;
+  function _renderMatches(live, upcoming) {
+    const row = document.getElementById('matches-row');
+    if (!row) return;
 
-    const items = [];
+    const cards = [];
 
     for (const m of live) {
       const score = (m.home_score != null && m.away_score != null)
-        ? `<strong>${m.home_score}</strong>&thinsp;-&thinsp;<strong>${m.away_score}</strong>`
+        ? `<span class="score">${m.home_score} – ${m.away_score}</span>`
         : 'vs';
-      items.push(
-        `<div class="ticker-card">` +
-          `<span class="ticker-badge live">🔴 LIVE</span>` +
-          `<span class="ticker-match">${m.home_team} ${score} ${m.away_team}</span>` +
-          (m.status ? `<span class="ticker-time">${m.status}</span>` : '') +
-        `</div><span class="ticker-sep"></span>`
+      cards.push(
+        `<div class="match-card live">` +
+          `<div class="match-comp live">🔴 LIVE</div>` +
+          `<div class="match-teams">${m.home_team} ${score} ${m.away_team}</div>` +
+          `<div class="match-when live-indicator">${m.status || 'LIVE'}</div>` +
+        `</div>`
       );
     }
 
-    const slice = live.length === 0 ? upcoming.slice(0, 5) : upcoming;
-    for (const m of slice) {
+    for (const m of upcoming) {
       const when = _fmtMatchDate(m.match_date, m.match_time);
-      items.push(
-        `<div class="ticker-card">` +
-          `<span class="ticker-badge upcoming">📅 UPCOMING</span>` +
-          `<span class="ticker-match">${m.home_team} vs ${m.away_team}</span>` +
-          (when ? `<span class="ticker-time">${when}</span>` : '') +
-        `</div><span class="ticker-sep"></span>`
+      cards.push(
+        `<div class="match-card upcoming">` +
+          `<div class="match-comp upcoming">📅 UPCOMING</div>` +
+          `<div class="match-teams">${m.home_team} vs ${m.away_team}</div>` +
+          `<div class="match-when">${when || 'TBC'}</div>` +
+        `</div>`
       );
     }
 
-    // Countdown card if before June 11, 2026
-    const WC = new Date('2026-06-11T00:00:00');
-    const now = new Date();
-    if (now < WC) {
-      const days = Math.ceil((WC - now) / 86400000);
-      items.push(
-        `<div class="ticker-card ticker-countdown">` +
-          `<span class="ticker-match">⏳ WORLD CUP 2026 STARTS IN <strong>${days}</strong> ${days === 1 ? 'DAY' : 'DAYS'}</span>` +
-        `</div><span class="ticker-sep"></span>`
-      );
-    }
-
-    if (items.length === 0) {
-      track.innerHTML = `<div class="ticker-card"><span class="ticker-match" style="color:var(--muted)">No upcoming matches</span></div>`;
-      track.style.animation = 'none';
+    if (cards.length === 0) {
+      row.innerHTML =
+        `<div class="matches-empty">` +
+          `⚽ World Cup 2026 group stage begins June 11 — check back for live scores` +
+        `</div>`;
       return;
     }
 
-    const html = items.join('');
-    track.innerHTML = html + html; // duplicate for seamless loop
-    track.style.animationDuration = `${Math.max(20, items.length * 7)}s`;
+    row.innerHTML = cards.join('');
   }
 
-  async function loadTicker() {
+  async function loadMatches() {
+    document.getElementById('matches-spinner')?.classList.add('visible');
     try {
       const res = await fetch(`${API}/matches/live-upcoming`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const { live, upcoming } = await res.json();
-      _renderTicker(live || [], upcoming || []);
+      _renderMatches(live || [], upcoming || []);
     } catch {
-      const track = document.getElementById('ticker-track');
-      if (!track) return;
-      const WC = new Date('2026-06-11T00:00:00');
-      if (new Date() < WC) {
-        const days = Math.ceil((WC - new Date()) / 86400000);
-        track.innerHTML =
-          `<div class="ticker-card ticker-countdown">` +
-            `<span class="ticker-match">⏳ WORLD CUP 2026 STARTS IN <strong>${days}</strong> DAYS</span>` +
+      const row = document.getElementById('matches-row');
+      if (row) {
+        row.innerHTML =
+          `<div class="matches-empty">` +
+            `⚽ World Cup 2026 group stage begins June 11 — check back for live scores` +
           `</div>`;
-        track.style.animation = 'none';
-      } else {
-        track.innerHTML = `<div class="ticker-card"><span class="ticker-match" style="color:var(--muted)">No upcoming matches</span></div>`;
-        track.style.animation = 'none';
       }
+    } finally {
+      document.getElementById('matches-spinner')?.classList.remove('visible');
     }
   }
 
-  setInterval(loadTicker, 60_000);
+  setInterval(loadMatches, 60_000);
 
   // ── League Selector ───────────────────────────────────────────────────────
 
-  function _showToast(msg) {
+  function _showToast(msg, isError = false) {
     const el = document.getElementById('league-toast');
     if (!el) return;
     el.textContent = msg;
+    el.style.borderColor = isError ? 'var(--red)' : 'var(--primary)';
+    el.style.color = isError ? 'var(--red)' : 'var(--primary)';
     el.classList.add('show');
     setTimeout(() => el.classList.remove('show'), 3000);
-  }
-
-  async function loadLeagues() {
-    const sel = document.getElementById('league-select');
-    try {
-      const res = await fetch(`${API}/admin/leagues`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const { leagues, active } = await res.json();
-
-      sel.innerHTML = leagues.map(l =>
-        `<option value="${l.id}" data-name="${l.name.replace(/"/g, '&quot;')}"${l.id === active.id ? ' selected' : ''}>${l.name}</option>`
-      ).join('');
-      sel.disabled = false;
-    } catch (err) {
-      sel.innerHTML = '<option value="10195">UEFA WC Qualification</option>';
-      sel.disabled = false;
-    }
   }
 
   async function switchLeague(selectEl) {
     const leagueId = parseInt(selectEl.value, 10);
     const opt = selectEl.options[selectEl.selectedIndex];
-    const leagueName = opt.dataset.name || opt.textContent;
+    const leagueName = opt.textContent.replace(/ \(Coming.*\)$/, '').trim();
 
+    const spinner = document.getElementById('header-spinner');
     selectEl.disabled = true;
+    if (spinner) spinner.classList.add('visible');
     _showToast(`Switching to ${leagueName}…`);
 
     try {
@@ -1207,21 +1241,22 @@
         body: JSON.stringify({ league_id: leagueId, league_name: leagueName }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      _showToast(`✓ Switched to ${leagueName}`);
+      _showToast(`✓ Switched to ${leagueName}. Refreshing data…`);
       loadTeams();
       loadCharts();
+      loadMatches();
       const depthTeam = document.getElementById('depth-team-input').value.trim() || 'England';
       loadDepthChart(depthTeam);
     } catch (err) {
-      _showToast(`⚠ Switch failed: ${err.message}`);
+      _showToast(`⚠ Switch failed: ${err.message}`, true);
     } finally {
       selectEl.disabled = false;
+      if (spinner) spinner.classList.remove('visible');
     }
   }
 
   // ── Boot ──────────────────────────────────────────────────────────────────
-  loadTicker();
-  loadLeagues();
+  loadMatches();
   loadTeams();
   loadCharts();
   loadDepthChart("England");
