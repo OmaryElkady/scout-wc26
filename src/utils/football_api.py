@@ -12,7 +12,9 @@ _BASE_URL = "https://free-api-live-football-data.p.rapidapi.com"
 
 # UEFA World Cup Qualification — has real national team data including France,
 # Germany, England, Spain, Portugal. Swap to 77 when WC 2026 fixtures go live ~June 11.
-_WORLD_CUP_LEAGUE_ID = 10195
+# Reads from config.LEAGUE_ID (env var LEAGUE_ID, default 10195); can be overridden
+# at runtime by POST /admin/switch-league which writes directly to this variable.
+_WORLD_CUP_LEAGUE_ID: int = config.LEAGUE_ID
 
 # 2022 data used for development. Swap to 2026 when provider populates WC 2026
 # fixtures (~June 11 2026).
@@ -197,6 +199,35 @@ class FootballAPIClient:
             all_players.extend(self.get_players_by_team(team_id))
         logger.info("Fetched %d total players", len(all_players))
         return all_players
+
+    def get_available_leagues(self) -> list[dict]:
+        """Search for World Cup leagues. Returns list of {id, name} dicts."""
+        logger.info("Fetching available leagues via /football-leagues-search")
+        data = self._get("/football-leagues-search", {"search": "World Cup"})
+        resp = data.get("response", {})
+        leagues_raw: list = []
+        if isinstance(resp, list):
+            leagues_raw = resp
+        elif isinstance(resp, dict):
+            leagues_raw = (
+                resp.get("leagues")
+                or resp.get("data")
+                or resp.get("results")
+                or []
+            )
+        results: list[dict] = []
+        for item in leagues_raw:
+            league_id = item.get("id") or item.get("leagueId") or item.get("league_id")
+            name = item.get("name") or item.get("leagueName") or item.get("league_name") or ""
+            if league_id is not None and name:
+                results.append({"id": int(league_id), "name": str(name)})
+        if not results:
+            # Always include the two known league IDs as a fallback
+            results = [
+                {"id": 10195, "name": "FIFA World Cup Qualification UEFA"},
+                {"id": 77, "name": "FIFA World Cup 2026"},
+            ]
+        return results
 
 
 football_api = FootballAPIClient()
