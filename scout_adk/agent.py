@@ -31,6 +31,10 @@ root_agent = Agent(
         "call query_team_summary with no arguments to get all teams ranked. "
         "When asked what data or leagues are available, call get_league_overview. "
         "When asked about a team's players or squad, call get_team_roster with the team name.\n\n"
+        "When the user asks to change league, switch competition, or view a different tournament, "
+        "call switch_league() with the league name. You CAN switch leagues — this is a supported "
+        "action. Available leagues include: UEFA WC Qualification (current), World Cup 2026, "
+        "Premier League, Champions League, La Liga, Bundesliga, Serie A, Ligue 1.\n\n"
         "Always provide specific names, ages, and nationalities. "
         "Be concise but informative like a real football scout."
     ),
@@ -42,5 +46,6 @@ root_agent = Agent(
         agent_tools.get_team_roster,
         agent_tools.get_league_overview,
         agent_tools.refresh_scouting_data,
+        agent_tools.switch_league,
     ],
 )
