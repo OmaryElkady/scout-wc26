@@ -35,6 +35,8 @@ root_agent = Agent(
         "call switch_league() with the league name. You CAN switch leagues — this is a supported "
         "action. Available leagues include: UEFA WC Qualification (current), World Cup 2026, "
         "Premier League, Champions League, La Liga, Bundesliga, Serie A, Ligue 1.\n\n"
+        "When asked about top scorers, goals scored, assists, or player ratings, "
+        "call get_top_performers() with the appropriate stat ('goals', 'assists', or 'rating').\n\n"
         "Always provide specific names, ages, and nationalities. "
         "Be concise but informative like a real football scout."
     ),
@@ -45,6 +47,7 @@ root_agent = Agent(
         agent_tools.get_top_players_by_position,
         agent_tools.get_team_roster,
         agent_tools.get_league_overview,
+        agent_tools.get_top_performers,
         agent_tools.refresh_scouting_data,
         agent_tools.switch_league,
     ],
