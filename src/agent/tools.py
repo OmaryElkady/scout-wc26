@@ -349,6 +349,125 @@ def get_league_overview() -> dict[str, Any]:
     }
 
 
+_LEAGUE_MAP: dict[str, int] = {
+    "world cup": 77,
+    "world cup 2026": 77,
+    "wc2026": 77,
+    "wc26": 77,
+    "fifa world cup": 77,
+    "uefa wc qualification": 10195,
+    "qualification": 10195,
+    "premier league": 47,
+    "epl": 47,
+    "champions league": 42,
+    "ucl": 42,
+    "la liga": 140,
+    "bundesliga": 78,
+    "serie a": 71,
+    "ligue 1": 61,
+}
+
+_LEAGUE_DISPLAY_NAMES: dict[int, str] = {
+    77: "World Cup 2026",
+    10195: "UEFA WC Qualification",
+    47: "Premier League",
+    42: "Champions League",
+    140: "La Liga",
+    78: "Bundesliga",
+    71: "Serie A",
+    61: "Ligue 1",
+}
+
+
+def switch_league(league_name: str) -> dict[str, Any]:
+    """Switch the active scouting league. Call this when the user asks to change league,
+    switch to a different competition, or view a different tournament.
+
+    Available leagues to switch to:
+    - "UEFA WC Qualification" → league_id 10195 (current)
+    - "World Cup 2026" → league_id 77 (available June 11)
+    - "Premier League" → league_id 47
+    - "Champions League" → league_id 42
+    - "La Liga" → league_id 140
+
+    When called: updates the active league, triggers a data refresh for the new league,
+    reruns the pipeline. Returns confirmation of the switch.
+    """
+    import src.utils.football_api as _fa_mod
+    from src.pipeline.transform import run_all
+    from src.utils.football_api import football_api
+
+    query = league_name.strip().lower()
+    league_id: Optional[int] = None
+    matched_name = league_name
+
+    for key, lid in _LEAGUE_MAP.items():
+        if key in query:
+            league_id = lid
+            matched_name = _LEAGUE_DISPLAY_NAMES.get(lid, key.title())
+            break
+
+    if league_id is None:
+        logger.info("switch_league: no map match for %r — searching API", league_name)
+        try:
+            data = football_api._get("/football-leagues-search", {"search": league_name})
+            resp = data.get("response", {})
+            results: list = []
+            if isinstance(resp, list):
+                results = resp
+            elif isinstance(resp, dict):
+                results = resp.get("leagues") or resp.get("data") or resp.get("results") or []
+            if results:
+                first = results[0]
+                raw_id = first.get("id") or first.get("leagueId") or first.get("league_id")
+                if raw_id is not None:
+                    league_id = int(raw_id)
+                    matched_name = first.get("name") or first.get("leagueName") or league_name
+        except Exception as exc:
+            logger.warning("switch_league: API search failed: %s", exc)
+
+    if league_id is None:
+        return {
+            "status": "error",
+            "message": (
+                f"Could not find league: '{league_name}'. "
+                "Try 'Premier League', 'Champions League', 'World Cup 2026', or 'UEFA WC Qualification'."
+            ),
+        }
+
+    logger.info("switch_league: switching to %r (id=%d)", matched_name, league_id)
+    _fa_mod._WORLD_CUP_LEAGUE_ID = league_id
+
+    try:
+        _direct_api_ingest()
+    except Exception as exc:
+        logger.error("switch_league: data ingest failed: %s", exc)
+        return {
+            "status": "error",
+            "league_name": matched_name,
+            "league_id": league_id,
+            "message": f"Switched league ID but data refresh failed: {exc}",
+        }
+
+    try:
+        run_all()
+    except Exception as exc:
+        logger.error("switch_league: pipeline failed: %s", exc)
+        return {
+            "status": "partial",
+            "league_name": matched_name,
+            "league_id": league_id,
+            "message": f"League switched and data ingested, but pipeline rebuild failed: {exc}",
+        }
+
+    return {
+        "status": "switched",
+        "league_name": matched_name,
+        "league_id": league_id,
+        "message": f"Switched to {matched_name}. Data refreshed with new league data.",
+    }
+
+
 def _direct_api_ingest() -> None:
     """Write fresh fixture and squad data to Bronze tables via the football API.
 
