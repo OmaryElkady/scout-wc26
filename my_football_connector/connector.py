@@ -1,221 +1,175 @@
-"""ADD ONE LINE DESCRIPTION OF YOUR CONNECTOR HERE.
-For example: This connector demonstrates a working starter template that syncs simple user data.
-See the Technical Reference documentation (https://fivetran.com/docs/connectors/connector-sdk/technical-reference)
-and the Best Practices documentation (https://fivetran.com/docs/connectors/connector-sdk/best-practices) for details
+"""Fivetran connector for free-api-live-football-data — World Cup 2026 qualification.
+
+Syncs two tables:
+  fixtures  — all matches for league 10195 (UEFA WC Qualification)
+  players   — squad members for each team found in those fixtures
+
+Run locally:  fivetran debug
+Deploy:       fivetran deploy
 """
 
-# For reading configuration from a JSON file
 import json
 
-# Import required classes from fivetran_connector_sdk
+import requests
 from fivetran_connector_sdk import Connector
-
-# For enabling Logs in your connector code
 from fivetran_connector_sdk import Logging as log
-
-# For supporting Data operations like upsert(), update(), delete() and checkpoint()
 from fivetran_connector_sdk import Operations as op
 
-""" ADD YOUR SOURCE-SPECIFIC IMPORTS HERE
-Example: import pandas, boto3, etc.
-Add comment for each import to explain its purpose for users to follow.
-"""
+_BASE_URL = "https://free-api-live-football-data.p.rapidapi.com"
+_LEAGUE_ID = 10195
+
+# Each team squad costs one API call. Free tier allows 100 req/day; fixtures
+# already consumes one, so cap player syncs at 10 teams per run.
+_MAX_TEAMS = 10
 
 
-"""
-GUIDELINES TO FOLLOW WHILE WRITING A CONNECTOR:
-- Import only the necessary modules and libraries to keep the code clean and efficient.
-- Use clear, consistent and descriptive names for your functions and variables.
-- For constants and global variables, use uppercase letters with underscores (e.g. CHECKPOINT_INTERVAL, TABLE_NAME).
-- Keep constants as private by default, unless they are meant to be used outside the module (e.g. __CHECKPOINT_INTERVAL).
-- Add comments to explain the purpose of each function in the docstring.
-- Add comments to explain the purpose of complex logic within functions, wherever necessary. Ideally try to split the main logic into smaller functions to avoid too many comments.
-- Add comments to highlight where users can make changes to the code to suit their specific use case.
-- Split your code into smaller functions to improve readability and maintainability where required.
-- Use logging to provide useful information about the connector's execution. Do not log excessively.
-- Implement error handling to catch exceptions and log them appropriately. Catch specific exceptions where possible.
-- Add retry for API requests to handle transient errors. Use exponential backoff strategy for retries.
-- Define the complete data model with primary key and data types in the schema function.
-- Ensure that the connector does not load all data into memory at once. This can cause memory overflow errors. Use pagination or streaming where possible.
-- Add comments to explain pagination or streaming logic to help users understand how to handle large datasets.
-- Add comments for upsert, update and delete to explain the purpose of upsert, update and delete. This will help users understand the upsert, update and delete processes.
-- Checkpoint your state at regular intervals to ensure that the connector can resume from the last successful sync in case of interruptions.
-- Add comments for checkpointing to explain the purpose of checkpoint. This will help users understand the checkpointing process.
-- Refer to the Best Practices documentation (https://fivetran.com/docs/connectors/connector-sdk/best-practices)
-"""
-
-
-def validate_configuration(configuration: dict):
-    """
-    Validate the configuration dictionary to ensure it contains all required parameters.
-    This function is called at the start of the update method to ensure that the connector has all necessary configuration values.
-    Args:
-        configuration: a dictionary that holds the configuration settings for the connector.
-    Raises:
-        ValueError: if any required configuration parameter is missing.
-    """
-    # Validate required configuration parameters
-    # No configuration required for this starter connector.
-    # When building your own connector, uncomment and modify the example below:
-    #
-    # required_configs = ["api_key", "base_url"]
-    # for key in required_configs:
-    #     if key not in configuration:
-    #         raise ValueError(f"Missing required configuration value: {key}")
-    pass
-
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
 
 def schema(configuration: dict):
-    """
-    Define the schema function which lets you configure the schema your connector delivers.
-    See the technical reference documentation for more details on the schema function:
-    https://fivetran.com/docs/connector-sdk/technical-reference/connector-sdk-code/connector-sdk-methods#schema
-    Args:
-        configuration: a dictionary that holds the configuration settings for the connector.
-    """
-
+    """Declare tables and primary keys. Column types inferred from upserted data."""
     return [
         {
-            "table": "users",  # Name of the table in the destination, required.
-            "primary_key": [
-                "id"
-            ],  # Primary key column(s) for the table. We recommend defining a primary_key for each table. If not provided, fivetran computes _fivetran_id from all column values.
-            "columns": {  # Definition of columns and their types, optional.
-                "id": "STRING",  # Example: defining the id column type. You can define column types when needed.
-                # For any columns whose names are not provided here, their data types will be inferred based on the data provided during upsert.
-                # We recommend not defining all columns here to allow for schema evolution.
-            },
+            "table": "fixtures",
+            "primary_key": ["fixture_id"],
+        },
+        {
+            "table": "players",
+            "primary_key": ["player_id", "team_id"],
         },
     ]
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _headers(configuration: dict) -> dict:
+    return {
+        "x-rapidapi-key": configuration["rapidapi_key"],
+        "x-rapidapi-host": configuration["rapidapi_host"],
+    }
+
+
+def _get(headers: dict, endpoint: str, params: dict | None = None) -> dict:
+    url = f"{_BASE_URL}{endpoint}"
+    log.debug(f"GET {url} params={params}")
+    resp = requests.get(url, headers=headers, params=params or {}, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _map_fixture(match: dict) -> dict:
+    """Flatten a raw fixture dict to the fixtures table schema.
+
+    Confirmed live field paths from football_api.py / bq_loader._map_fixture():
+      home/away contain: id, name, score
+      status contains:   utcTime, reason.short
+    """
+    home = match.get("home") or {}
+    away = match.get("away") or {}
+    status = match.get("status") or {}
+    home_score = home.get("score")
+    away_score = away.get("score")
+    return {
+        "fixture_id": str(match.get("id", "")),
+        "home_team_id": str(home.get("id", "")),
+        "home_team_name": home.get("name", ""),
+        "away_team_id": str(away.get("id", "")),
+        "away_team_name": away.get("name", ""),
+        "match_date": status.get("utcTime", ""),
+        "status": (status.get("reason") or {}).get("short", ""),
+        "home_score": int(home_score) if home_score is not None else None,
+        "away_score": int(away_score) if away_score is not None else None,
+        "league_id": str(_LEAGUE_ID),
+    }
+
+
+def _teams_from_matches(matches: list) -> dict[str, str]:
+    """Return {team_id: team_name} for every team appearing in fixtures."""
+    teams: dict[str, str] = {}
+    for match in matches:
+        for side in ("home", "away"):
+            side_data = match.get(side) or {}
+            tid = str(side_data.get("id", ""))
+            if tid and tid not in teams:
+                teams[tid] = side_data.get("name", tid)
+    return teams
+
+
+# ---------------------------------------------------------------------------
+# Update (called by Fivetran on every sync)
+# ---------------------------------------------------------------------------
 
 def update(configuration: dict, state: dict):
-    """
-    Define the update function, which is a required function, and is called by Fivetran during each sync.
-    See the technical reference documentation for more details on the update function
-    https://fivetran.com/docs/connectors/connector-sdk/technical-reference#update
-    Args:
-        configuration: A dictionary containing connection details
-        state: A dictionary containing state information from previous runs
-        The state dictionary is empty for the first sync or for any full re-sync
-    """
+    """Sync fixtures then squad data. Uses direct op.upsert() — no yield needed."""
+    hdrs = _headers(configuration)
 
-    # Validate the configuration to ensure it contains all required values.
-    validate_configuration(configuration=configuration)
+    # ── Step 1: Fixtures ─────────────────────────────────────────────────────
+    log.info(f"Fetching fixtures for league {_LEAGUE_ID}")
+    data = _get(hdrs, "/football-get-all-matches-by-league", {"leagueid": _LEAGUE_ID})
+    matches = (data.get("response") or {}).get("matches", [])
+    log.info(f"Received {len(matches)} fixtures")
 
-    # Extract configuration parameters as needed
-    # TODO: Extract your configuration parameters here
-    # Example: api_key = configuration.get("api_key")
+    for match in matches:
+        op.upsert("fixtures", _map_fixture(match))
 
-    # Get the state variable for the sync, if needed
-    # This is useful for incremental syncs to keep track of the last synced record or timestamp.
-    # For example, you might want to track the last updated timestamp to fetch only new or updated records since the last sync.
-    # For the first sync, state will be empty JSON object: {}
-    # You can modify this logic based on your specific use case.
-    # For more information on state management, refer to: https://fivetran.com/docs/connector-sdk/working-with-connector-sdk#workingwithstatejsonfile
-    last_updated_at = state.get("last_updated_at")
-    new_updated_at = last_updated_at
+    # Checkpoint after fixtures so Fivetran can safely write if players fail.
+    op.checkpoint(state={"step": "fixtures_done"})
 
-    try:
-        # Fetch data from your source
-        # TODO: Replace get_data() with your actual data fetching logic
-        data = get_data(last_updated_at)
+    # ── Step 2: Players ──────────────────────────────────────────────────────
+    teams = _teams_from_matches(matches)
+    team_sample = list(teams.items())[:_MAX_TEAMS]
+    log.info(f"Syncing players for {len(team_sample)} of {len(teams)} teams (cap={_MAX_TEAMS})")
 
-        if not data:
-            log.info("No new data to sync")
-            return
+    total_players = 0
+    for team_id, team_name in team_sample:
+        try:
+            resp = _get(hdrs, "/football-get-list-player", {"teamid": team_id})
+        except requests.HTTPError as exc:
+            log.warning(f"Squad fetch failed for team {team_id} ({team_name}): {exc}")
+            continue
 
-        log.info(f"Processing {len(data)} record(s)")
+        # Confirmed response path: response.list.squad (list of position groups)
+        # response.list.name is the canonical team name from the squad endpoint.
+        squad_list = (resp.get("response") or {}).get("list") or {}
+        resolved_name = squad_list.get("name") or team_name
+        squad_groups = squad_list.get("squad") or []
 
-        for record in data:
-            # The 'upsert' operation is used to insert or update data in the destination table.
-            # The first argument is the name of the destination table.
-            # The second argument is a dictionary containing the record to be upserted.
-            op.upsert(table="users", data=record)
+        player_count = 0
+        for group in squad_groups:
+            for player in group.get("members") or []:
+                if player.get("excludeFromRanking"):
+                    continue  # coaches have this flag set; skip them
 
-            # Update state tracking for incremental syncs
-            record_updated_at = record.get("updated_at")
+                age_raw = player.get("age")
+                shirt_raw = player.get("shirtNumber")
+                op.upsert("players", {
+                    "player_id": str(player.get("id", "")),
+                    "team_id": team_id,
+                    "team_name": resolved_name,
+                    "name": player.get("name", ""),
+                    "position": player.get("positionIdsDesc", ""),
+                    "age": int(age_raw) if age_raw is not None else None,
+                    "jersey_number": int(shirt_raw) if shirt_raw is not None else None,
+                })
+                player_count += 1
 
-            # Update only if record_updated_time is greater than current new_sync_time
-            if new_updated_at is None or (
-                record_updated_at and record_updated_at > new_updated_at
-            ):
-                new_updated_at = (
-                    record_updated_at  # Assuming the API returns the data in ascending order
-                )
+        total_players += player_count
+        log.info(f"  {resolved_name}: {player_count} players")
 
-        # Update state with the current sync time for the next run
-        new_state = {"last_updated_at": new_updated_at}
-
-        # Save the progress by checkpointing the state. This is important for ensuring that the sync process can resume
-        # from the correct position in case of next sync or interruptions.
-        # You should checkpoint even if you are not using incremental sync, as it tells Fivetran it is safe to write to destination.
-        # For large datasets, checkpoint regularly (e.g., every N records) not only at the end.
-        # Learn more about how and where to checkpoint by reading our best practices documentation
-        # (https://fivetran.com/docs/connector-sdk/best-practices#optimizingperformancewhenhandlinglargedatasets).
-        op.checkpoint(new_state)
-        log.info(f"Data synced successfully. Last updated at: {new_updated_at}")
-
-    except Exception as e:
-        # In case of an exception, raise a runtime error
-        raise RuntimeError(f"Failed to sync data: {str(e)}")
+    log.info(f"Sync complete — {len(matches)} fixtures, {total_players} players")
+    op.checkpoint(state={})
 
 
-def get_data(last_sync_time=None):
-    """
-    This function simulates fetching data from a source.
-    In a real-world scenario, this would involve making API calls or database queries.
+# ---------------------------------------------------------------------------
+# Connector entry point
+# ---------------------------------------------------------------------------
 
-    TODO: Replace this with your actual data fetching logic.
-    - Add pagination if your source supports it
-    - Filter by last_sync_time for incremental syncs
-    - Add retry logic for API calls
-    - Handle rate limiting
-
-    Args:
-        last_sync_time: The last sync time to fetch data from (for incremental syncs).
-                        None for full syncs.
-    Returns:
-        A list of dictionaries representing the data to be upserted.
-    """
-    # Simulate data fetching logic
-    # For starter template, return simple user test data
-    # In production, replace this with actual API calls or database queries
-    return [
-        {
-            "id": "1",
-            "name": "Alice",
-            "email": "alice@example.com",
-            "created_at": "2024-01-01T00:00:00Z",
-            "updated_at": "2024-01-01T00:00:00Z",
-        },
-        {
-            "id": "2",
-            "name": "Bob",
-            "email": "bob@example.com",
-            "created_at": "2024-01-01T01:00:00Z",
-            "updated_at": "2024-01-01T01:00:00Z",
-        },
-    ]
-
-
-# Create the connector object using the schema and update functions
 connector = Connector(update=update, schema=schema)
 
-# Check if the script is being run as the main module.
-# This is Python's standard entry method allowing your script to be run directly from the command line or IDE 'run' button.
-#
-# IMPORTANT: The recommended way to test your connector is using the Fivetran debug command:
-#   fivetran debug
-#
-# This local testing block is provided as a convenience for quick debugging during development,
-# such as using IDE debug tools (breakpoints, step-through debugging, etc.).
-# Note: This method is not called by Fivetran when executing your connector in production.
-# Always test using 'fivetran debug' prior to finalizing and deploying your connector.
 if __name__ == "__main__":
-    # Open the configuration.json file and load its contents
     with open("configuration.json", "r") as f:
         configuration = json.load(f)
-
-    # Test the connector locally
     connector.debug(configuration=configuration)
