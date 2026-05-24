@@ -29,6 +29,7 @@ _TOOL_FUNCTIONS = [
     agent_tools.get_team_roster,
     agent_tools.get_league_overview,
     agent_tools.refresh_scouting_data,
+    agent_tools.switch_league,
 ]
 
 
