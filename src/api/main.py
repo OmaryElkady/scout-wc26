@@ -280,6 +280,7 @@ def chart_ai_generate(body: ChartRequest) -> dict:
     table_ps = config.table("gold_player_stats")
     table_ts = config.table("gold_team_summary")
     table_mr = config.table("gold_match_results")
+    table_tp = config.table("gold_top_performers")
 
     client = genai.Client(vertexai=True, project=config.PROJECT_ID, location=config.REGION)
 
@@ -297,12 +298,16 @@ def chart_ai_generate(body: ChartRequest) -> dict:
         f"  fixture_id, home_team_name, away_team_name,\n"
         f"  home_score, away_score, match_date, winner,\n"
         f"  goal_difference, total_goals\n\n"
+        f"gold_top_performers columns (full ID: `{table_tp}`):\n"
+        f"  player_name, team_name, goals (INT, nullable), assists (INT, nullable),\n"
+        f"  rating (FLOAT, nullable), stat_type ('goals'|'assists'|'rating'), rank\n\n"
         f"IMPORTANT RULES:\n"
         f"- Only use SELECT queries\n"
         f"- Use LIMIT 20 maximum\n"
         f"- Return exactly 2 columns: a string label column first, a numeric value column second\n"
-        f"- For player performance (goals scored, assists) — this data is NOT available; "
-        f"set sql to null and explain in the error field instead of generating bad SQL\n"
+        f"- For top scorers, goal leaders, or assist leaders use gold_top_performers "
+        f"  filtered by stat_type = 'goals' or 'assists' — this data IS available\n"
+        f"- For per-match player goals (not in any table) — set sql to null and explain in error\n"
         f"- For match results and team scores, use gold_match_results\n"
         f"- For player profiles and squad data, use gold_player_stats\n"
         f"- For league standings, use gold_team_summary\n"
@@ -358,6 +363,59 @@ def chart_ai_generate(body: ChartRequest) -> dict:
             data.append(0.0)
 
     return {"labels": labels, "data": data, "chart_type": chart_type, "title": title}
+
+
+@app.get("/leaderboard")
+def leaderboard(stat: str = "goals", limit: int = 10) -> dict:
+    valid = {"goals", "assists", "rating"}
+    if stat not in valid:
+        stat = "goals"
+    safe_limit = min(max(1, int(limit)), 20)
+    table = config.table("gold_top_performers")
+    sql = (
+        "SELECT player_name, team_name, "
+        + stat
+        + ", rank FROM `"
+        + table
+        + "` WHERE stat_type = '"
+        + _esc(stat)
+        + "' AND "
+        + stat
+        + " IS NOT NULL ORDER BY rank ASC LIMIT "
+        + str(safe_limit)
+    )
+    try:
+        rows = bq.run_query(sql)
+    except Exception as exc:
+        logger.warning("Leaderboard query failed: %s", exc)
+        rows = []
+    return {
+        "players": rows,
+        "stat": stat,
+        "league": _active_league.get("name", ""),
+    }
+
+
+@app.get("/charts/top-scorers")
+def chart_top_scorers() -> dict:
+    table = config.table("gold_top_performers")
+    sql = (
+        "SELECT player_name, goals FROM `"
+        + table
+        + "` WHERE stat_type = 'goals' AND goals IS NOT NULL "
+        "ORDER BY rank ASC LIMIT 10"
+    )
+    try:
+        rows = bq.run_query(sql)
+    except Exception as exc:
+        logger.warning("Top scorers chart query failed: %s", exc)
+        rows = []
+    league_name = _active_league.get("name", "")
+    return {
+        "labels": [r["player_name"] for r in rows],
+        "data": [r["goals"] for r in rows],
+        "title": f"Top Scorers — {league_name}",
+    }
 
 
 @app.get("/matches/live-upcoming")
@@ -430,6 +488,31 @@ def report_pdf(player_name: str) -> Response:
     _age = player.get("age", "unknown")
     _position = player.get("position", "unknown")
     _nationality = player.get("nationality", "unknown")
+
+    # Query top performers stats for this player (supplementary — non-fatal)
+    _top_stat_label = ""
+    _top_stat_value = ""
+    try:
+        top_sql = (
+            "SELECT stat_type, goals, assists, rating, rank "
+            "FROM `" + config.table("gold_top_performers") + "` "
+            "WHERE LOWER(player_name) LIKE '%" + _esc(_pname.lower()) + "%' "
+            "ORDER BY rank ASC LIMIT 3"
+        )
+        top_rows = bq.run_query(top_sql)
+        if top_rows:
+            r = top_rows[0]
+            if r.get("stat_type") == "goals" and r.get("goals") is not None:
+                _top_stat_label = "GOALS"
+                _top_stat_value = f"{r['goals']} (Rank #{r['rank']})"
+            elif r.get("stat_type") == "assists" and r.get("assists") is not None:
+                _top_stat_label = "ASSISTS"
+                _top_stat_value = f"{r['assists']} (Rank #{r['rank']})"
+            elif r.get("stat_type") == "rating" and r.get("rating") is not None:
+                _top_stat_label = "RATING"
+                _top_stat_value = f"{float(r['rating']):.2f} (Rank #{r['rank']})"
+    except Exception:
+        pass
 
     scouting_para = scout_agent.run_query(
         f"You are a UEFA-licensed football scout. Write a professional 4-5 sentence scouting report for "
@@ -509,6 +592,8 @@ def report_pdf(player_name: str) -> Response:
         ["NATIONALITY", player.get("nationality", "—"), "W / D / L", f"{_wins} / {_draws} / {_losses}"],
         ["JERSEY #", str(player.get("jersey_number", "—")), "POINTS", str(_points)],
     ]
+    if _top_stat_label:
+        stats_data.append([_top_stat_label, _top_stat_value, "", ""])
     stats_tbl = Table(stats_data, colWidths=[cw * 0.75, cw * 1.25, cw * 0.75, cw * 1.25])
     stats_tbl.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
