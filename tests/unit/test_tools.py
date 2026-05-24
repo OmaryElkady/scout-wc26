@@ -1,6 +1,7 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from src.agent.tools import (
+    _direct_api_ingest,
     get_league_overview,
     get_player_detail,
     get_team_roster,
@@ -274,9 +275,10 @@ def test_get_top_players_by_position_uses_config_table(monkeypatch):
 
 _FIVETRAN_TRIGGER = "src.ingestion.fivetran_trigger"
 _PIPELINE_TRANSFORM = "src.pipeline.transform"
+_TOOLS_MODULE = "src.agent.tools"
 
 
-def test_refresh_scouting_data_happy_path():
+def test_refresh_scouting_data_fivetran_happy_path():
     with (
         patch(f"{_FIVETRAN_TRIGGER}.trigger_sync") as mock_trigger,
         patch(f"{_FIVETRAN_TRIGGER}.poll_sync_status") as mock_poll,
@@ -289,22 +291,49 @@ def test_refresh_scouting_data_happy_path():
     assert result == {
         "status": "complete",
         "sync_triggered": True,
+        "sync_method": "fivetran",
         "pipeline_rerun": True,
-        "message": "Scouting data refreshed successfully",
+        "message": "Data refreshed via fivetran",
     }
 
 
-def test_refresh_scouting_data_sync_failure_returns_error():
+def test_refresh_scouting_data_fivetran_fails_falls_back_to_direct_api():
+    """When Fivetran raises any exception, the direct API path is used instead."""
     with (
-        patch(f"{_FIVETRAN_TRIGGER}.trigger_sync", side_effect=RuntimeError("sync boom")),
+        patch(f"{_FIVETRAN_TRIGGER}.trigger_sync", side_effect=RuntimeError("HTTP 404")),
         patch(f"{_FIVETRAN_TRIGGER}.poll_sync_status"),
+        patch(f"{_TOOLS_MODULE}._direct_api_ingest") as mock_direct,
+        patch(f"{_PIPELINE_TRANSFORM}.run_all") as mock_run,
+    ):
+        result = refresh_scouting_data()
+    mock_direct.assert_called_once()
+    mock_run.assert_called_once()
+    assert result == {
+        "status": "complete",
+        "sync_triggered": True,
+        "sync_method": "direct_api",
+        "pipeline_rerun": True,
+        "message": "Data refreshed via direct_api",
+    }
+
+
+def test_refresh_scouting_data_fivetran_and_direct_api_both_fail():
+    """When both Fivetran and the direct API fallback fail, return a user-friendly error."""
+    with (
+        patch(f"{_FIVETRAN_TRIGGER}.trigger_sync", side_effect=RuntimeError("connection refused")),
+        patch(f"{_FIVETRAN_TRIGGER}.poll_sync_status"),
+        patch(f"{_TOOLS_MODULE}._direct_api_ingest", side_effect=RuntimeError("API down")),
         patch(f"{_PIPELINE_TRANSFORM}.run_all") as mock_run,
     ):
         result = refresh_scouting_data()
     mock_run.assert_not_called()
     assert result["status"] == "error"
     assert result["step_failed"] == "sync"
-    assert "sync boom" in result["message"]
+    assert result["sync_method"] == "direct_api"
+    # Message must be user-friendly, not exposing internal error strings
+    assert "Syncing latest football data directly from API" in result["message"]
+    assert "API down" not in result["message"]
+    assert "connection refused" not in result["message"]
 
 
 def test_refresh_scouting_data_pipeline_failure_returns_error():
@@ -316,7 +345,92 @@ def test_refresh_scouting_data_pipeline_failure_returns_error():
         result = refresh_scouting_data()
     assert result["status"] == "error"
     assert result["step_failed"] == "pipeline"
+    assert result["sync_method"] == "fivetran"
     assert "pipeline boom" in result["message"]
+
+
+def test_refresh_scouting_data_fallback_pipeline_failure():
+    """Pipeline failure after direct API fallback includes sync_method in the error."""
+    with (
+        patch(f"{_FIVETRAN_TRIGGER}.trigger_sync", side_effect=RuntimeError("no connector")),
+        patch(f"{_FIVETRAN_TRIGGER}.poll_sync_status"),
+        patch(f"{_TOOLS_MODULE}._direct_api_ingest"),
+        patch(f"{_PIPELINE_TRANSFORM}.run_all", side_effect=RuntimeError("bq error")),
+    ):
+        result = refresh_scouting_data()
+    assert result["status"] == "error"
+    assert result["step_failed"] == "pipeline"
+    assert result["sync_method"] == "direct_api"
+    assert result["sync_triggered"] is True
+
+
+# ---------------------------------------------------------------------------
+# _direct_api_ingest
+# ---------------------------------------------------------------------------
+
+
+def test_direct_api_ingest_writes_fixtures_and_squads():
+    """_direct_api_ingest fetches fixtures, extracts teams, and writes squads per team."""
+    fake_fixtures = [
+        {"home": {"id": 1, "name": "France"}, "away": {"id": 2, "name": "Germany"}},
+        {"home": {"id": 3, "name": "Spain"}, "away": {"id": 1, "name": "France"}},
+    ]
+    mock_fa = MagicMock()
+    mock_fa.get_world_cup_fixtures.return_value = fake_fixtures
+    mock_fa.get_players_by_team.return_value = [{"id": 99, "name": "Player A"}]
+
+    with (
+        patch("src.ingestion.bq_loader.write_bronze_fixtures") as mock_write_fix,
+        patch("src.ingestion.bq_loader.write_bronze_team_squads") as mock_write_sq,
+        patch("src.utils.football_api.football_api", mock_fa),
+    ):
+        _direct_api_ingest()
+
+    mock_write_fix.assert_called_once_with(fake_fixtures)
+    # Three unique teams: 1, 2, 3
+    assert mock_fa.get_players_by_team.call_count == 3
+    assert mock_write_sq.call_count == 3
+
+
+def test_direct_api_ingest_deduplicates_teams():
+    """Each team ID appears only once even when it shows up in multiple fixtures."""
+    fake_fixtures = [
+        {"home": {"id": 10, "name": "Italy"}, "away": {"id": 10, "name": "Italy"}},
+        {"home": {"id": 10, "name": "Italy"}, "away": {"id": 20, "name": "Brazil"}},
+    ]
+    mock_fa = MagicMock()
+    mock_fa.get_world_cup_fixtures.return_value = fake_fixtures
+    mock_fa.get_players_by_team.return_value = []
+
+    with (
+        patch("src.ingestion.bq_loader.write_bronze_fixtures"),
+        patch("src.ingestion.bq_loader.write_bronze_team_squads"),
+        patch("src.utils.football_api.football_api", mock_fa),
+    ):
+        _direct_api_ingest()
+
+    assert mock_fa.get_players_by_team.call_count == 2
+
+
+def test_direct_api_ingest_skips_non_dict_sides():
+    """Fixtures with missing or non-dict home/away entries don't crash the ingest."""
+    fake_fixtures = [
+        {"home": None, "away": {"id": 5, "name": "Portugal"}},
+        {"home": {"id": 6, "name": "Croatia"}, "away": None},
+        {},
+    ]
+    mock_fa = MagicMock()
+    mock_fa.get_world_cup_fixtures.return_value = fake_fixtures
+    mock_fa.get_players_by_team.return_value = []
+
+    with (
+        patch("src.ingestion.bq_loader.write_bronze_fixtures"),
+        patch("src.ingestion.bq_loader.write_bronze_team_squads"),
+        patch("src.utils.football_api.football_api", mock_fa),
+    ):
+        _direct_api_ingest()
+
+    assert mock_fa.get_players_by_team.call_count == 2
 
 
 # ---------------------------------------------------------------------------
