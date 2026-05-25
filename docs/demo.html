@@ -1155,8 +1155,14 @@
       if (typeof onComplete === 'function') onComplete(hasError);
     }
 
-    // Auto-close with no visual if no real events arrive within 5 s (simple factual query)
-    noEventHandle = setTimeout(() => { if (!hasEvents) _stop(false); }, 5000);
+    // Timeout strategy:
+    //   No callback (agent query): stop silently after 5 s with no events
+    //   With callback (switch/refresh): hard 90 s deadline, report error if no completion
+    if (onComplete) {
+      noEventHandle = setTimeout(() => _stop(true), 90000);
+    } else {
+      noEventHandle = setTimeout(() => { if (!hasEvents) _stop(false); }, 5000);
+    }
 
     async function _poll() {
       try {
