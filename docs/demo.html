@@ -1936,6 +1936,37 @@
     setTimeout(() => el.classList.remove('show'), 3500);
   }
 
+  function updateProgressUI(steps) {
+    if (!steps || steps.length === 0) return;
+    const panel   = document.getElementById('progress-panel');
+    const barFill = document.getElementById('progress-bar-fill');
+    if (_progressSteps.length === 0 && panel) {
+      panel.style.opacity = '1';
+      panel.style.transition = '';
+      panel.classList.add('visible');
+    }
+    _progressSteps = steps;
+    _renderProgressSteps();
+    const last = steps[steps.length - 1];
+    if (barFill && last) barFill.style.width = last.progress + '%';
+  }
+
+  async function pollProgress(maxAttempts = 150) {
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        const resp = await fetch(`${API}/progress/current`);
+        if (!resp.ok) continue;
+        const data = await resp.json();
+        updateProgressUI(data.steps || []);
+        if (data.complete) {
+          return data.error ? { success: false, error: data.error } : { success: true };
+        }
+      } catch { /* ignore transient errors */ }
+    }
+    return { success: false, error: 'Timeout after 5 minutes' };
+  }
+
   async function switchLeague(selectEl) {
     const leagueId = parseInt(selectEl.value, 10);
     const opt = selectEl.options[selectEl.selectedIndex];
@@ -1946,6 +1977,12 @@
     if (spinner) spinner.classList.add('visible');
     _showToast(`Switching to ${leagueName}…`, 'info');
 
+    _progressSteps = [];
+    const _pSteps = document.getElementById('progress-steps');
+    const _pBar   = document.getElementById('progress-bar-fill');
+    if (_pSteps) _pSteps.innerHTML = '';
+    if (_pBar)   _pBar.style.width = '0%';
+
     try {
       const res = await fetch(`${API}/admin/switch-league`, {
         method: 'POST',
@@ -1954,24 +1991,35 @@
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      // Job started in background; poll for completion, then reload UI
-      _openProgressStream(function(hasError) {
-        selectEl.disabled = false;
-        if (spinner) spinner.classList.remove('visible');
-        if (!hasError) {
-          _showToast(`✓ Switched to ${leagueName}. Refreshing data…`, 'success');
-          loadTeams();
-          loadCharts();
-          loadMatches();
-          loadLeaderboard(_lbStat);
-          const depthInput = document.getElementById('depth-team-input');
-          loadDepthChart(depthInput && depthInput.value.trim() || 'England');
-        } else {
-          _showToast(`⚠ League switch completed with errors.`, 'error');
+      const result = await pollProgress();
+
+      setTimeout(() => {
+        const panel = document.getElementById('progress-panel');
+        if (panel && panel.classList.contains('visible')) {
+          panel.style.transition = 'opacity .9s';
+          panel.style.opacity = '0';
+          setTimeout(() => {
+            panel.classList.remove('visible');
+            panel.style.transition = '';
+            panel.style.opacity = '1';
+          }, 900);
         }
-      });
+      }, 3000);
+
+      if (result.success) {
+        _showToast(`✓ Switched to ${leagueName}. Refreshing data…`, 'success');
+        loadTeams();
+        loadCharts();
+        loadMatches();
+        loadLeaderboard(_lbStat);
+        const depthInput = document.getElementById('depth-team-input');
+        loadDepthChart(depthInput && depthInput.value.trim() || 'England');
+      } else {
+        _showToast(`⚠ League switch completed with errors.`, 'error');
+      }
     } catch (err) {
       _showToast(`⚠ Switch failed: ${err.message}`, 'error');
+    } finally {
       selectEl.disabled = false;
       if (spinner) spinner.classList.remove('visible');
     }
