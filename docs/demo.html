@@ -1114,12 +1114,12 @@
     submitQuery();
   }
 
-  // ── Progress stream ────────────────────────────────────────────────────────
+  // ── Progress polling ───────────────────────────────────────────────────────
 
   let _progressSteps = [];
   let _activeProgressSource = null;
 
-  function _openProgressStream() {
+  function _openProgressStream(onComplete) {
     if (_activeProgressSource) { _activeProgressSource.close(); _activeProgressSource = null; }
 
     _progressSteps = [];
@@ -1129,60 +1129,66 @@
     if (stepsEl) stepsEl.innerHTML = '';
     if (barFill) barFill.style.width = '0%';
 
-    let hasEvents  = false;
-    let fadeHandle = null;
+    let hasEvents     = false;
+    let pollHandle    = null;
+    let noEventHandle = null;
+    let done          = false;
 
-    // Auto-close if no real events within 5 s (simple factual query)
-    const noEventTimer = setTimeout(() => {
-      if (!hasEvents) { es.close(); _activeProgressSource = null; }
-    }, 5000);
+    function _fadeOut() {
+      const p = document.getElementById('progress-panel');
+      if (!p) return;
+      p.style.transition = 'opacity .9s';
+      p.style.opacity = '0';
+      setTimeout(() => {
+        p.classList.remove('visible');
+        p.style.transition = '';
+        p.style.opacity = '1';
+      }, 900);
+    }
 
-    const es = new EventSource(`${API}/stream/progress`);
-    _activeProgressSource = es;
+    function _stop(hasError) {
+      if (done) return;
+      done = true;
+      if (pollHandle)    { clearInterval(pollHandle);  pollHandle = null; }
+      if (noEventHandle) { clearTimeout(noEventHandle); noEventHandle = null; }
+      _activeProgressSource = null;
+      if (typeof onComplete === 'function') onComplete(hasError);
+    }
 
-    es.onmessage = evt => {
+    // Auto-close with no visual if no real events arrive within 5 s (simple factual query)
+    noEventHandle = setTimeout(() => { if (!hasEvents) _stop(false); }, 5000);
+
+    async function _poll() {
       try {
-        const event = JSON.parse(evt.data);
-        if (event.keepalive) return;
+        const res = await fetch(`${API}/progress/current`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const newSteps = data.steps || [];
 
-        if (!hasEvents) {
-          hasEvents = true;
-          clearTimeout(noEventTimer);
-          if (panel) { panel.style.opacity = '1'; panel.style.transition = ''; panel.classList.add('visible'); }
+        if (newSteps.length > _progressSteps.length) {
+          if (!hasEvents) {
+            hasEvents = true;
+            if (noEventHandle) { clearTimeout(noEventHandle); noEventHandle = null; }
+            if (panel) { panel.style.opacity = '1'; panel.style.transition = ''; panel.classList.add('visible'); }
+          }
+          _progressSteps = newSteps;
+          _renderProgressSteps();
+          const last = newSteps[newSteps.length - 1];
+          if (barFill && last) barFill.style.width = last.progress + '%';
         }
 
-        if (barFill) barFill.style.width = event.progress + '%';
-        _progressSteps.push(event);
-        _renderProgressSteps();
-
-        if (event.progress >= 100) {
-          es.close();
-          _activeProgressSource = null;
-          fadeHandle = setTimeout(() => {
-            if (panel) {
-              panel.style.transition = 'opacity .9s';
-              panel.style.opacity = '0';
-              setTimeout(() => {
-                panel.classList.remove('visible');
-                panel.style.transition = '';
-                panel.style.opacity = '1';
-              }, 900);
-            }
-          }, 3000);
+        if (data.complete) {
+          const hasError = !!data.error || newSteps.some(s => s.status === 'error');
+          _stop(hasError);
+          setTimeout(_fadeOut, 3000);
         }
-      } catch {}
-    };
+      } catch { /* ignore transient fetch errors */ }
+    }
 
-    es.onerror = () => { clearTimeout(noEventTimer); es.close(); _activeProgressSource = null; };
+    pollHandle = setInterval(_poll, 1500);
 
-    return {
-      close() {
-        clearTimeout(noEventTimer);
-        if (fadeHandle) clearTimeout(fadeHandle);
-        es.close();
-        _activeProgressSource = null;
-      }
-    };
+    _activeProgressSource = { close() { _stop(false); } };
+    return _activeProgressSource;
   }
 
   function _renderProgressSteps() {
@@ -1934,8 +1940,6 @@
     if (spinner) spinner.classList.add('visible');
     _showToast(`Switching to ${leagueName}…`, 'info');
 
-    const progressHandle = _openProgressStream();
-
     try {
       const res = await fetch(`${API}/admin/switch-league`, {
         method: 'POST',
@@ -1943,16 +1947,25 @@
         body: JSON.stringify({ league_id: leagueId, league_name: leagueName }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      _showToast(`✓ Switched to ${leagueName}. Refreshing data…`, 'success');
-      loadTeams();
-      loadCharts();
-      loadMatches();
-      loadLeaderboard(_lbStat);
-      const depthTeam = document.getElementById('depth-team-input').value.trim() || 'England';
-      loadDepthChart(depthTeam);
+
+      // Job started in background; poll for completion, then reload UI
+      _openProgressStream(function(hasError) {
+        selectEl.disabled = false;
+        if (spinner) spinner.classList.remove('visible');
+        if (!hasError) {
+          _showToast(`✓ Switched to ${leagueName}. Refreshing data…`, 'success');
+          loadTeams();
+          loadCharts();
+          loadMatches();
+          loadLeaderboard(_lbStat);
+          const depthInput = document.getElementById('depth-team-input');
+          loadDepthChart(depthInput && depthInput.value.trim() || 'England');
+        } else {
+          _showToast(`⚠ League switch completed with errors.`, 'error');
+        }
+      });
     } catch (err) {
       _showToast(`⚠ Switch failed: ${err.message}`, 'error');
-    } finally {
       selectEl.disabled = false;
       if (spinner) spinner.classList.remove('visible');
     }
