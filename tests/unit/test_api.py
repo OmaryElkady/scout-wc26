@@ -254,3 +254,132 @@ async def test_leaderboard_invalid_stat_defaults_to_goals(mock_bq):
     assert response.status_code == 200
     data = response.json()
     assert data["stat"] == "goals"
+
+
+# ---------------------------------------------------------------------------
+# GET /progress/current
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_progress_current_returns_200():
+    from src.utils.progress import reset_progress
+
+    reset_progress()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/progress/current")
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_progress_current_empty_state():
+    from src.utils.progress import reset_progress
+
+    reset_progress()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/progress/current")
+    data = response.json()
+    assert data["steps"] == []
+    assert data["complete"] is False
+    assert data["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_progress_current_reflects_emitted_steps():
+    from src.utils.progress import emit_progress, reset_progress
+
+    reset_progress()
+    emit_progress("Step 1", "running", 30)
+    emit_progress("Step 2", "done", 100)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/progress/current")
+    data = response.json()
+    assert len(data["steps"]) == 2
+    assert data["complete"] is True
+    assert data["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_progress_current_error_step_sets_error_field():
+    from src.utils.progress import emit_progress, reset_progress
+
+    reset_progress()
+    emit_progress("Exploded", "error", 100)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/progress/current")
+    data = response.json()
+    assert data["complete"] is True
+    assert data["error"] == "Exploded"
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/switch-league  (background task — returns immediately)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("src.agent.tools.switch_league", return_value={"status": "switched"})
+async def test_switch_league_returns_200(mock_sw):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/admin/switch-league",
+            json={"league_id": 47, "league_name": "Premier League"},
+        )
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+@patch("src.agent.tools.switch_league", return_value={"status": "switched"})
+async def test_switch_league_returns_started_status(mock_sw):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/admin/switch-league",
+            json={"league_id": 47, "league_name": "Premier League"},
+        )
+    data = response.json()
+    assert data["status"] == "started"
+    assert "message" in data
+
+
+@pytest.mark.asyncio
+@patch("src.agent.tools.switch_league", return_value={"status": "switched"})
+async def test_switch_league_resets_progress(mock_sw):
+    """Route must reset progress before scheduling the task so old steps don't bleed through."""
+    from src.utils.progress import emit_progress, get_current_progress, reset_progress
+
+    reset_progress()
+    emit_progress("Old stale step", "done", 100)  # leftover from previous op
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.post(
+            "/admin/switch-league",
+            json={"league_id": 47, "league_name": "Premier League"},
+        )
+    # After the route + background task run, progress should reflect the new operation,
+    # not the stale "Old stale step".
+    state = get_current_progress()
+    for step in state["steps"]:
+        assert step["step"] != "Old stale step", "Stale progress step leaked through after reset"
+
+
+# ---------------------------------------------------------------------------
+# POST /refresh  (background task — returns immediately)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("src.agent.tools.refresh_scouting_data", return_value={"status": "complete"})
+async def test_refresh_returns_200(mock_ref):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/refresh")
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+@patch("src.agent.tools.refresh_scouting_data", return_value={"status": "complete"})
+async def test_refresh_returns_started_status(mock_ref):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/refresh")
+    data = response.json()
+    assert data["status"] == "started"
+    assert "message" in data
