@@ -450,35 +450,35 @@ def chart_top_scorers() -> dict:
 
 @app.get("/matches/live-upcoming")
 def matches_live_upcoming() -> dict:
-    from datetime import date, timedelta
-
-    from src.utils.football_api import football_api
-
-    live: list[dict] = []
-    upcoming: list[dict] = []
-
+    table = config.table("silver_fixtures")
+    sql = (
+        "SELECT home_team_name, away_team_name, home_score, away_score, "
+        "status, CAST(match_date AS STRING) AS match_date "
+        "FROM `" + table + "` "
+        "WHERE match_date >= CURRENT_DATE() "
+        "AND is_completed = FALSE "
+        "ORDER BY match_date ASC LIMIT 10"
+    )
     try:
-        raw = football_api.get_live_matches()
-        for m in raw[:10]:
-            n = _normalize_match(m, is_live=True)
-            if n["home_team"] or n["away_team"]:
-                live.append(n)
+        rows = bq.run_query(sql)
     except Exception as exc:
-        logger.warning("Live matches fetch failed: %s", exc)
-
-    today = date.today()
-    for delta in range(4):
-        d = today + timedelta(days=delta)
-        try:
-            raw = football_api.get_matches_by_date(d.strftime("%Y-%m-%d"))
-            for m in raw:
-                n = _normalize_match(m, is_live=False)
-                if n["home_team"] or n["away_team"]:
-                    upcoming.append(n)
-        except Exception as exc:
-            logger.warning("Upcoming matches fetch failed for %s: %s", d, exc)
-
-    return {"live": live[:5], "upcoming": upcoming[:10]}
+        logger.warning("Upcoming matches query failed: %s", exc)
+        rows = []
+    if not rows:
+        return {"live": [], "upcoming": [], "message": "World Cup 2026 begins June 11"}
+    upcoming = [
+        {
+            "home_team": r.get("home_team_name", ""),
+            "away_team": r.get("away_team_name", ""),
+            "home_score": r.get("home_score"),
+            "away_score": r.get("away_score"),
+            "status": r.get("status", ""),
+            "match_date": r.get("match_date"),
+            "match_time": None,
+        }
+        for r in rows
+    ]
+    return {"live": [], "upcoming": upcoming}
 
 
 @app.post("/report/pdf/{player_name}")
