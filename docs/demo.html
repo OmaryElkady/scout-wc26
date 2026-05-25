@@ -809,40 +809,6 @@
     </div>
   </div>
 
-  <!-- ── Top Performers: Goals / Assists / Rating ── -->
-  <div class="card" id="section-top-performers">
-    <div class="card-header">
-      <div class="icon">🏆</div>
-      <div>
-        <h2>Top Performers</h2>
-        <p>Live leaderboards for goals, assists, and player ratings</p>
-      </div>
-    </div>
-    <div class="card-body">
-      <div class="lb-tabs">
-        <button class="lb-tab-btn active" onclick="switchLbTab('goals', this)">⚽ Goals</button>
-        <button class="lb-tab-btn" onclick="switchLbTab('assists', this)">🎯 Assists</button>
-        <button class="lb-tab-btn" onclick="switchLbTab('rating', this)">⭐ Rating</button>
-      </div>
-      <div class="lb-spinner" id="lb-spinner"></div>
-      <div class="table-wrap">
-        <table class="lb-table">
-          <thead>
-            <tr>
-              <th class="lb-rank">#</th>
-              <th>Player</th>
-              <th>Team</th>
-              <th id="lb-value-header" style="text-align:right">Goals</th>
-            </tr>
-          </thead>
-          <tbody id="lb-tbody">
-            <tr><td colspan="4"><div class="lb-empty">Loading…</div></td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
   <!-- ── Section 1: Scout Agent ── -->
   <div class="card" id="section-agent">
     <div class="card-header">
@@ -877,6 +843,40 @@
         <div class="step-list" id="progress-steps"></div>
       </div>
       <div class="answer-box" id="query-answer"></div>
+    </div>
+  </div>
+
+  <!-- ── Top Performers: Goals / Assists / Rating ── -->
+  <div class="card" id="section-top-performers">
+    <div class="card-header">
+      <div class="icon">🏆</div>
+      <div>
+        <h2>Top Performers</h2>
+        <p>Live leaderboards for goals, assists, and player ratings</p>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="lb-tabs">
+        <button class="lb-tab-btn active" onclick="switchLbTab('goals', this)">⚽ Goals</button>
+        <button class="lb-tab-btn" onclick="switchLbTab('assists', this)">🎯 Assists</button>
+        <button class="lb-tab-btn" onclick="switchLbTab('rating', this)">⭐ Rating</button>
+      </div>
+      <div class="lb-spinner" id="lb-spinner"></div>
+      <div class="table-wrap">
+        <table class="lb-table">
+          <thead>
+            <tr>
+              <th class="lb-rank">#</th>
+              <th>Player</th>
+              <th>Team</th>
+              <th id="lb-value-header" style="text-align:right">Goals</th>
+            </tr>
+          </thead>
+          <tbody id="lb-tbody">
+            <tr><td colspan="4"><div class="lb-empty">Loading…</div></td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -1055,7 +1055,7 @@
   </div>
 
   <!-- ── Section 5: PDF Report Download ── -->
-  <div class="card">
+  <div class="card" id="section-pdf-report">
     <div class="card-header">
       <div class="icon">📄</div>
       <div>
@@ -1255,9 +1255,43 @@
           break;
         }
         case 'navigate_to_section': {
-          const idMap = { charts: 'section-analytics', reports: 'section-reports', teams: 'section-teams', agent: 'section-agent' };
+          const idMap = {
+            charts:          'section-analytics',
+            reports:         'section-pdf-report',
+            'pdf-report':    'section-pdf-report',
+            teams:           'section-teams',
+            agent:           'section-agent',
+            'top-performers': 'section-top-performers',
+            leaderboard:     'section-top-performers',
+          };
           const el = document.getElementById(idMap[action.section] || action.section);
           if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          break;
+        }
+        case 'fill_report_input': {
+          const el = document.getElementById('section-pdf-report');
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          await new Promise(r => setTimeout(r, 600));
+          const input = document.getElementById('pdf-input');
+          if (input && action.player_name) {
+            await _typewriter(input, action.player_name, 50);
+          }
+          break;
+        }
+        case 'trigger_report_generate': {
+          await new Promise(r => setTimeout(r, 500));
+          const btn = document.getElementById('pdf-btn');
+          if (btn && !btn.disabled) btn.click();
+          break;
+        }
+        case 'switch_leaderboard_tab': {
+          const stat = action.stat || 'goals';
+          const btns = document.querySelectorAll('.lb-tab-btn');
+          let targetBtn = null;
+          btns.forEach(b => { if (b.textContent.toLowerCase().includes(stat.toLowerCase())) targetBtn = b; });
+          if (targetBtn) switchLbTab(stat, targetBtn);
+          const lbEl = document.getElementById('section-top-performers');
+          if (lbEl) lbEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
           break;
         }
         case 'fill_chart_input': {
