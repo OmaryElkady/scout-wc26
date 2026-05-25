@@ -575,8 +575,14 @@ def _direct_api_ingest(_emit=None) -> None:
     squad is written via write_bronze_team_squads(), which dual-writes to both
     bronze_team_squads and bronze_players with proper field mapping.
 
+    When config.FAST_LEAGUE_SWITCH is True (default), fetches up to 20 teams
+    concurrently with max_workers=5, cutting switch time from ~60 s to ~15 s.
+    When False, falls back to the original sequential loop (all teams).
+
     _emit: optional callable(step, status, progress) for progress reporting.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     from src.ingestion.bq_loader import write_bronze_fixtures, write_bronze_team_squads
     from src.utils.football_api import football_api
 
@@ -599,10 +605,41 @@ def _direct_api_ingest(_emit=None) -> None:
                     teams[tid] = side_data.get("name", str(tid))
 
     logger.info("Direct API ingest: %d teams found in fixtures", len(teams))
-    _p("👥 Fetching player squads...", "running", 45)
-    for team_id, team_name in teams.items():
-        players = football_api.get_players_by_team(team_id)
-        write_bronze_team_squads(team_id, players, team_name=team_name)
+
+    if config.FAST_LEAGUE_SWITCH:
+        _MAX_TEAMS = 20
+        team_list = list(teams.items())[:_MAX_TEAMS]
+        total = len(team_list)
+        _p(f"👥 Fetching squads (0/{total})...", "running", 35)
+        completed = 0
+
+        def _fetch_and_write(team_id: int, team_name: str) -> None:
+            players = football_api.get_players_by_team(team_id)
+            write_bronze_team_squads(team_id, players, team_name=team_name)
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {
+                executor.submit(_fetch_and_write, tid, tname): (tid, tname)
+                for tid, tname in team_list
+            }
+            for future in as_completed(futures):
+                future.result()
+                completed += 1
+                pct = 35 + int(25 * completed / max(total, 1))
+                _p(
+                    f"👥 Fetching squads ({completed}/{total})...",
+                    "running",
+                    pct,
+                )
+        logger.info(
+            "Direct API ingest: fetched %d/%d teams (fast mode)", completed, len(teams)
+        )
+    else:
+        _p("👥 Fetching player squads...", "running", 45)
+        for team_id, team_name in teams.items():
+            players = football_api.get_players_by_team(team_id)
+            write_bronze_team_squads(team_id, players, team_name=team_name)
+
     # Top performers (supplementary — non-fatal if endpoint not available for this league)
     try:
         from src.ingestion.bq_loader import write_bronze_top_performers
