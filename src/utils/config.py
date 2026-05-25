@@ -43,6 +43,9 @@ class Config:
         self.LOG_LEVEL: str = os.environ.get("LOG_LEVEL", "INFO")
         self.API_PORT: int = int(os.environ.get("API_PORT", "8000"))
         self.LEAGUE_ID: int = int(os.environ.get("LEAGUE_ID", "10195"))
+        self.FAST_LEAGUE_SWITCH: bool = (
+            os.environ.get("FAST_LEAGUE_SWITCH", "true").lower() != "false"
+        )
 
     def table(self, table_name: str) -> str:
         """Return the fully-qualified BigQuery table ID for the given table name."""
