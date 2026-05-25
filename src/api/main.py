@@ -1,15 +1,12 @@
-import asyncio
-import json
 import logging
 import os
 import pathlib
-import queue as _stdlib_queue
 import re
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, Response
 
 from src.agent import scout_agent
 from src.agent import tools as agent_tools
@@ -208,43 +205,19 @@ def health() -> dict:
     return {"status": "ok", "model": _MODEL, "dataset": config.BQ_DATASET}
 
 
-@app.get("/stream/progress")
-async def stream_progress() -> StreamingResponse:
-    from src.utils.progress import subscribe, unsubscribe
+@app.get("/progress/current")
+def progress_current() -> dict:
+    from src.utils.progress import get_current_progress
 
-    subscriber_q = subscribe()
-
-    async def event_generator():
-        start = asyncio.get_event_loop().time()
-        MAX_DURATION = 300.0
-        try:
-            yield "data: {\"keepalive\": true}\n\n"
-            while True:
-                if asyncio.get_event_loop().time() - start > MAX_DURATION:
-                    break
-                try:
-                    event = subscriber_q.get_nowait()
-                    yield f"data: {json.dumps(event)}\n\n"
-                    if event.get("progress", 0) >= 100:
-                        break
-                except _stdlib_queue.Empty:
-                    await asyncio.sleep(0.15)
-                    yield ": keepalive\n\n"
-        except GeneratorExit:
-            pass
-        finally:
-            unsubscribe(subscriber_q)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return get_current_progress()
 
 
 @app.post("/query", response_model=QueryResponse)
 def query(request: QueryRequest) -> QueryResponse:
+    from src.utils.progress import reset_progress
+
     logger.info("POST /query: question=%r", request.question)
+    reset_progress()
     answer = scout_agent.run_query(request.question)
     page_actions = _infer_page_actions(request.question, answer)
     return QueryResponse(answer=answer, question=request.question, page_actions=page_actions)
@@ -768,9 +741,13 @@ def teams() -> TeamListResponse:
 
 
 @app.post("/refresh")
-def refresh() -> dict:
+def refresh(background_tasks: BackgroundTasks) -> dict:
+    from src.utils.progress import reset_progress
+
     logger.info("POST /refresh")
-    return agent_tools.refresh_scouting_data()
+    reset_progress()
+    background_tasks.add_task(agent_tools.refresh_scouting_data)
+    return {"status": "started", "message": "Data refresh started in background."}
 
 
 @app.get("/admin/leagues")
@@ -782,17 +759,23 @@ def admin_leagues() -> dict:
 
 
 @app.post("/admin/switch-league")
-def admin_switch_league(body: SwitchLeagueRequest) -> dict:
+def admin_switch_league(body: SwitchLeagueRequest, background_tasks: BackgroundTasks) -> dict:
+    from src.utils.progress import reset_progress
+
     logger.info("POST /admin/switch-league: id=%d name=%s", body.league_id, body.league_name)
     _active_league["id"] = body.league_id
     _active_league["name"] = body.league_name
 
-    result = agent_tools.switch_league(body.league_name)
+    reset_progress()
+    league_name = body.league_name
+
+    def _run() -> None:
+        agent_tools.switch_league(league_name)
+
+    background_tasks.add_task(_run)
     return {
-        "status": "switched",
-        "league": body.league_name,
-        "league_id": body.league_id,
-        "refresh": result,
+        "status": "started",
+        "message": f"Switching to '{body.league_name}'…",
     }
 
 
