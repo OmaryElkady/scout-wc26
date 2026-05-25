@@ -200,6 +200,63 @@ class FootballAPIClient:
         logger.info("Fetched %d total players", len(all_players))
         return all_players
 
+    def get_world_cup_players_fast(
+        self,
+        max_teams: int = 20,
+        _progress_callback=None,
+    ) -> list[tuple[int, str, list[dict]]]:
+        """Fetch squads for up to max_teams teams concurrently (max_workers=5).
+
+        Bypasses the coarse all-players Bronze cache so each team is fetched
+        individually via its per-team cache check in get_players_by_team().
+        Use this for league switches where speed matters more than completeness.
+
+        _progress_callback: optional callable(completed: int, total: int) called
+            from worker threads after each team finishes.
+        Returns list of (team_id, team_name, players) tuples.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        fixtures = self.get_world_cup_fixtures()
+        teams: dict[int, str] = {}
+        for match in fixtures:
+            for side in ("home", "away"):
+                side_data = match.get(side, {})
+                if isinstance(side_data, dict) and side_data.get("id"):
+                    tid = int(side_data["id"])
+                    if tid not in teams:
+                        teams[tid] = side_data.get("name", str(tid))
+            if len(teams) >= max_teams:
+                break
+
+        team_list = list(teams.items())
+        total = len(team_list)
+        logger.info(
+            "get_world_cup_players_fast: fetching %d teams (max=%d, max_workers=5)",
+            total,
+            max_teams,
+        )
+
+        results: list[tuple[int, str, list[dict]]] = []
+        completed = 0
+
+        def _fetch(tid: int, tname: str) -> tuple[int, str, list[dict]]:
+            return tid, tname, self.get_players_by_team(tid)
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {
+                executor.submit(_fetch, tid, tname): (tid, tname)
+                for tid, tname in team_list
+            }
+            for future in as_completed(futures):
+                tid, tname, players = future.result()
+                results.append((tid, tname, players))
+                completed += 1
+                if _progress_callback is not None:
+                    _progress_callback(completed, total)
+
+        return results
+
     def get_top_scorers(self, league_id: int | None = None) -> list:
         """Fetch top goal scorers for the active league."""
         lid = league_id or _WORLD_CUP_LEAGUE_ID
