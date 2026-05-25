@@ -2,9 +2,10 @@ import logging
 import os
 import pathlib
 import re
+import threading
 from typing import Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
@@ -741,12 +742,12 @@ def teams() -> TeamListResponse:
 
 
 @app.post("/refresh")
-def refresh(background_tasks: BackgroundTasks) -> dict:
+def refresh() -> dict:
     from src.utils.progress import reset_progress
 
     logger.info("POST /refresh")
     reset_progress()
-    background_tasks.add_task(agent_tools.refresh_scouting_data)
+    threading.Thread(target=agent_tools.refresh_scouting_data, daemon=True).start()
     return {"status": "started", "message": "Data refresh started in background."}
 
 
@@ -759,7 +760,7 @@ def admin_leagues() -> dict:
 
 
 @app.post("/admin/switch-league")
-def admin_switch_league(body: SwitchLeagueRequest, background_tasks: BackgroundTasks) -> dict:
+def admin_switch_league(body: SwitchLeagueRequest) -> dict:
     from src.utils.progress import reset_progress
 
     logger.info("POST /admin/switch-league: id=%d name=%s", body.league_id, body.league_name)
@@ -767,15 +768,14 @@ def admin_switch_league(body: SwitchLeagueRequest, background_tasks: BackgroundT
     _active_league["name"] = body.league_name
 
     reset_progress()
-    league_name = body.league_name
-
-    def _run() -> None:
-        agent_tools.switch_league(league_name)
-
-    background_tasks.add_task(_run)
+    threading.Thread(
+        target=agent_tools.switch_league,
+        args=(body.league_name,),
+        daemon=True,
+    ).start()
     return {
         "status": "started",
-        "message": f"Switching to '{body.league_name}'…",
+        "message": f"Switching to '{body.league_name}'...",
     }
 
 
