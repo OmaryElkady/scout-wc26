@@ -76,6 +76,30 @@ _KNOWN_LEAGUES_FOR_ACTIONS: dict[str, str] = {
 }
 
 
+def _extract_player_name_from_report_q(question: str) -> str:
+    """Extract player name from a report request question."""
+    # "for/about <Name>"
+    for prep in ("for", "about"):
+        m = re.search(
+            rf"\b{prep}\b\s+([A-Za-z][a-zA-Z]+(?:\s+[A-Za-z][a-zA-Z]+){{0,2}})",
+            question,
+            re.IGNORECASE,
+        )
+        if m:
+            name = m.group(1).strip()
+            if name.lower() not in {"a", "an", "the", "any", "all", "report", "scouting", "pdf"}:
+                return name
+    # "<Name>'s (scouting) report"
+    m = re.search(
+        r"([A-Za-z][a-zA-Z]+(?:\s+[A-Za-z][a-zA-Z]+){0,2})'s\s+(?:scouting\s+)?report",
+        question,
+        re.IGNORECASE,
+    )
+    if m:
+        return m.group(1).strip()
+    return ""
+
+
 def _infer_page_actions(question: str, answer: str) -> list[dict]:
     actions: list[dict] = []
     q = question.lower()
@@ -124,10 +148,42 @@ def _infer_page_actions(question: str, answer: str) -> list[dict]:
         ).strip() or question
         actions.append({"action": "fill_chart_input", "text": chart_text})
 
-    if any(w in q for w in ("report", "scouting report")) and any(
-        w in a for w in ("assessment", "report", "position", "nationality", "age")
-    ):
+    # Report detection: explicit "generate/download/show report for X" → PDF flow
+    is_report_q = any(w in q for w in ("report", "scouting report"))
+    is_explicit_report = is_report_q and any(
+        w in q for w in ("generate", "download", "create", "make", "get", "show")
+    )
+    if is_explicit_report:
+        player_name = _extract_player_name_from_report_q(question)
         actions.append({"action": "navigate_to_section", "section": "reports"})
+        if player_name:
+            actions.append({"action": "fill_report_input", "player_name": player_name})
+            actions.append({"action": "trigger_report_generate"})
+    elif is_report_q and any(w in a for w in ("assessment", "report", "position", "nationality", "age")):
+        actions.append({"action": "navigate_to_section", "section": "reports"})
+
+    # Leaderboard / top performers detection
+    _no_chart_or_switch = "chart" not in q and "switch" not in q
+    is_leaderboard_q = (
+        any(w in q for w in (
+            "top scorer", "top assist", "top perform", "leaderboard",
+            "most goals", "most assists", "highest rated", "best rating",
+            "top goal", "leading scorer",
+        )) and _no_chart_or_switch
+    ) or (
+        any(w in q for w in ("top", "best", "most", "highest", "leading", "based on")) and
+        any(w in q for w in ("goals", "assists", "scoring", "rating")) and
+        _no_chart_or_switch
+    )
+    if is_leaderboard_q:
+        if any(w in q for w in ("assist", "assists")):
+            lb_stat = "assists"
+        elif any(w in q for w in ("rating", "rated")):
+            lb_stat = "rating"
+        else:
+            lb_stat = "goals"
+        actions.append({"action": "navigate_to_section", "section": "top-performers"})
+        actions.append({"action": "switch_leaderboard_tab", "stat": lb_stat})
 
     return actions
 
