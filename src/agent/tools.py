@@ -412,6 +412,35 @@ _LEAGUE_MAP: dict[str, int] = {
     "bundesliga": 78,
     "serie a": 71,
     "ligue 1": 61,
+    # African competitions
+    "afcon": 6,
+    "africa cup": 6,
+    "african cup": 6,
+    "africa cup of nations": 6,
+    "caf": 6,
+    # More European
+    "eredivisie": 88,
+    "liga nos": 94,
+    "portuguese league": 94,
+    "scottish premiership": 108,
+    "turkish league": 203,
+    "super lig": 203,
+    # South American
+    "copa america": 9,
+    "conmebol": 11,
+    "brasileirao": 71,
+    "argentina": 26,
+    # Asian
+    "afc": 17,
+    "asian cup": 17,
+    # Other World Cup competitions
+    "women's world cup": 6,
+    "u20 world cup": 5,
+    "nations league": 8,
+    # More popular leagues
+    "mls": 253,
+    "saudi league": 307,
+    "saudi pro league": 307,
 }
 
 _LEAGUE_DISPLAY_NAMES: dict[int, str] = {
@@ -421,8 +450,21 @@ _LEAGUE_DISPLAY_NAMES: dict[int, str] = {
     42: "Champions League",
     140: "La Liga",
     78: "Bundesliga",
-    71: "Serie A",
+    71: "Serie A / Brasileirao",
     61: "Ligue 1",
+    6: "AFCON / Africa Cup of Nations",
+    88: "Eredivisie",
+    94: "Liga Portugal",
+    108: "Scottish Premiership",
+    203: "Süper Lig",
+    9: "Copa América",
+    11: "CONMEBOL",
+    26: "Argentine Primera División",
+    17: "AFC Asian Cup",
+    5: "U20 World Cup",
+    8: "UEFA Nations League",
+    253: "MLS",
+    307: "Saudi Pro League",
 }
 
 
@@ -430,12 +472,13 @@ def switch_league(league_name: str) -> dict[str, Any]:
     """Switch the active scouting league. Call this when the user asks to change league,
     switch to a different competition, or view a different tournament.
 
-    Available leagues to switch to:
-    - "UEFA WC Qualification" → league_id 10195 (current)
-    - "World Cup 2026" → league_id 77 (available June 11)
-    - "Premier League" → league_id 47
-    - "Champions League" → league_id 42
-    - "La Liga" → league_id 140
+    Available leagues include (but are not limited to):
+    - "UEFA WC Qualification" → 10195 (current), "World Cup 2026" → 77
+    - "Premier League" → 47, "Champions League" → 42, "La Liga" → 140
+    - "Bundesliga" → 78, "Serie A" → 71, "Ligue 1" → 61
+    - "AFCON" / "Africa Cup of Nations" → 6, "Copa América" → 9
+    - "MLS" → 253, "Saudi Pro League" → 307, "Eredivisie" → 88
+    If the league name is not in the built-in map, the system searches for it automatically.
 
     When called: updates the active league, triggers a data refresh for the new league,
     reruns the pipeline. Returns confirmation of the switch.
