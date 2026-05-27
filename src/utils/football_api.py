@@ -101,8 +101,8 @@ class FootballAPIClient:
         team_ids = [int(s["teamId"]) for s in standings if s.get("teamId")]
         return standings, team_ids
 
-    def get_world_cup_fixtures(self) -> list[dict]:
-        if self._table_has_any_data("bronze_fixtures"):
+    def get_world_cup_fixtures(self, force_refresh: bool = False) -> list[dict]:
+        if not force_refresh and self._table_has_any_data("bronze_fixtures"):
             logger.info("Fixtures cache hit, reading raw_json from Bronze")
             rows = bq.run_query(f"SELECT raw_json FROM `{config.table('bronze_fixtures')}`")
             return [json.loads(r["raw_json"]) for r in rows]
