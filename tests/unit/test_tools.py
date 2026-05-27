@@ -20,12 +20,13 @@ from src.utils import config as config_module
 # ---------------------------------------------------------------------------
 
 
-def test_query_players_no_filters_omits_where_clause():
+def test_query_players_no_filters_uses_only_league_filter():
     with patch("src.agent.tools.bq") as mock_bq:
         mock_bq.run_query.return_value = []
         query_players()
         sql = mock_bq.run_query.call_args[0][0]
-        assert "WHERE" not in sql
+        # league_id filter is always applied even with no other filters
+        assert "WHERE league_id = " in sql
         assert "LIMIT" in sql
 
 
@@ -162,7 +163,8 @@ def test_query_team_summary_no_args_returns_all_teams():
         assert result == expected
         sql = mock_bq.run_query.call_args[0][0]
         assert "ORDER BY points DESC" in sql
-        assert "WHERE" not in sql
+        # league_id filter is always applied
+        assert "WHERE league_id = " in sql
 
 
 # ---------------------------------------------------------------------------
