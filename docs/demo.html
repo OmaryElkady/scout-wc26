@@ -442,7 +442,9 @@
       border: 1px solid var(--border);
       border-radius: 8px;
       padding: 18px;
+      transition: opacity .3s;
     }
+    .chart-card.loading { opacity: .45; pointer-events: none; }
     .chart-card-title {
       font-size: 11px;
       font-weight: 600;
@@ -795,11 +797,11 @@
       <option value="42">Champions League</option>
       <option value="140">La Liga</option>
       <option disabled>── More Leagues ──</option>
-      <option value="6">AFCON / Africa Cup of Nations</option>
-      <option value="9">Copa América</option>
+      <option value="54">Bundesliga</option>
+      <option value="135">Serie A</option>
+      <option value="61">Ligue 1</option>
       <option value="253">MLS</option>
-      <option value="307">Saudi Pro League</option>
-      <option value="88">Eredivisie</option>
+      <option value="71">Brasileirao</option>
     </select>
     <span class="header-spinner" id="header-spinner"></span>
   </div>
@@ -1106,9 +1108,8 @@
   const _TEAM_CACHE_TTL = 5 * 60 * 1000;
   const _leagueDisplayNames = {
     10195: 'UEFA WC Qual', 77: 'World Cup 2026', 47: 'Premier League',
-    42: 'Champions League', 140: 'La Liga', 78: 'Bundesliga', 135: 'Serie A',
-    71: 'Brasileirao', 61: 'Ligue 1', 6: 'AFCON', 88: 'Eredivisie',
-    9: 'Copa América', 253: 'MLS', 307: 'Saudi Pro League',
+    42: 'Champions League', 140: 'La Liga', 54: 'Bundesliga', 135: 'Serie A',
+    61: 'Ligue 1', 71: 'Brasileirao', 253: 'MLS', 108: 'Scottish Prem',
   };
   const _initSel = document.getElementById('league-select');
   let _activeLeagueId = _initSel ? parseInt(_initSel.value, 10) : 10195;
@@ -1721,6 +1722,8 @@
 
   // Load a static (non-interactive) chart from a GET endpoint.
   async function _loadStaticChart(canvasId, titleId, url, chartType, opts = {}) {
+    const card = document.getElementById(canvasId)?.closest(".chart-card");
+    if (card) card.classList.add("loading");
     try {
       const res = await fetch(`${API}${url}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1729,10 +1732,11 @@
       const titleEl = document.getElementById(titleId);
       if (titleEl) titleEl.textContent = payload.title;
     } catch (err) {
-      const card = document.getElementById(canvasId)?.closest(".chart-card");
       const wrap = card?.querySelector(".chart-wrap");
       if (wrap) wrap.innerHTML =
         `<div class="empty-state" style="color:var(--red)">⚠ ${err.message}</div>`;
+    } finally {
+      if (card) card.classList.remove("loading");
     }
   }
 
@@ -1740,11 +1744,12 @@
   // ── Chart 2: Top 15 Teams by Points ───────────────────────────────────────
 
   async function loadCharts() {
+    const lid = _activeLeagueId;
     _loadStaticChart("chart-squad-age", "chart-age-title",
-      "/charts/squad-age-profile", "bar", { indexAxis: "y", color: C.blue });
+      `/charts/squad-age-profile?league_id=${lid}`, "bar", { indexAxis: "y", color: C.blue });
 
     _loadStaticChart("chart-teams", "chart-teams-title",
-      "/charts/top-teams", "bar", { color: C.green });
+      `/charts/top-teams?league_id=${lid}`, "bar", { color: C.green });
   }
 
   // ── Chart 3: Position Depth (interactive) ─────────────────────────────────
@@ -1760,9 +1765,11 @@
 
   async function loadDepthChart(teamName) {
     const titleEl = document.getElementById("chart-depth-title");
+    const card = document.getElementById("chart-depth")?.closest(".chart-card");
     _ensureCanvas("depth-wrap", "chart-depth");
+    if (card) card.classList.add("loading");
     try {
-      const res = await fetch(`${API}/charts/team-depth/${encodeURIComponent(teamName)}`);
+      const res = await fetch(`${API}/charts/team-depth/${encodeURIComponent(teamName)}?league_id=${_activeLeagueId}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const payload = await res.json();
       _renderChart("chart-depth", { ...payload, chart_type: "bar" }, { color: C.yellow });
@@ -1772,6 +1779,8 @@
       const wrap = document.getElementById("depth-wrap");
       if (wrap) wrap.innerHTML =
         `<div class="empty-state" style="color:var(--red)">⚠ ${err.message}</div>`;
+    } finally {
+      if (card) card.classList.remove("loading");
     }
   }
 
@@ -2090,7 +2099,7 @@
       hdr.textContent = stat === 'goals' ? 'Goals' : stat === 'assists' ? 'Assists' : 'Rating';
     }
     try {
-      const res = await fetch(`${API}/leaderboard?stat=${encodeURIComponent(stat)}&limit=10`);
+      const res = await fetch(`${API}/leaderboard?stat=${encodeURIComponent(stat)}&limit=10&league_id=${_activeLeagueId}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const players = data.players || [];
