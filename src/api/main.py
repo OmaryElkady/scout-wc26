@@ -268,11 +268,12 @@ async def adk_query(request: QueryRequest) -> QueryResponse:
 
 
 @app.get("/charts/squad-age-profile")
-def chart_squad_age_profile() -> dict:
+def chart_squad_age_profile(league_id: Optional[int] = None) -> dict:
+    lid = str(league_id) if league_id else str(_active_league["id"])
     sql = (
         "SELECT team_name, ROUND(AVG(age), 1) as avg_age "
         "FROM `" + config.table("gold_player_stats") + "` "
-        "WHERE age IS NOT NULL "
+        "WHERE age IS NOT NULL AND league_id = '" + _esc(lid) + "' "
         "GROUP BY team_name ORDER BY avg_age ASC LIMIT 10"
     )
     rows = bq.run_query(sql)
@@ -284,10 +285,12 @@ def chart_squad_age_profile() -> dict:
 
 
 @app.get("/charts/top-teams")
-def chart_top_teams() -> dict:
+def chart_top_teams(league_id: Optional[int] = None) -> dict:
+    lid = str(league_id) if league_id else str(_active_league["id"])
     sql = (
         "SELECT team_name, points "
         "FROM `" + config.table("gold_team_summary") + "` "
+        "WHERE league_id = '" + _esc(lid) + "' "
         "ORDER BY points DESC LIMIT 15"
     )
     rows = bq.run_query(sql)
@@ -299,12 +302,14 @@ def chart_top_teams() -> dict:
 
 
 @app.get("/charts/team-depth/{team_name}")
-def chart_team_depth(team_name: str) -> dict:
+def chart_team_depth(team_name: str, league_id: Optional[int] = None) -> dict:
     _POS_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3, "UNKNOWN": 4}
+    lid = str(league_id) if league_id else str(_active_league["id"])
     sql = (
         "SELECT position, COUNT(*) as cnt "
         "FROM `" + config.table("gold_player_stats") + "` "
         "WHERE LOWER(team_name) LIKE '%" + _esc(team_name.lower()) + "%' "
+        "AND league_id = '" + _esc(lid) + "' "
         "GROUP BY position"
     )
     rows = bq.run_query(sql)
@@ -412,7 +417,7 @@ def chart_ai_generate(body: ChartRequest) -> dict:
 
 
 @app.get("/leaderboard")
-def leaderboard(stat: str = "goals", limit: int = 10) -> dict:
+def leaderboard(stat: str = "goals", limit: int = 10, league_id: Optional[int] = None) -> dict:
     valid = {"goals", "assists", "rating"}
     if stat not in valid:
         stat = "goals"
