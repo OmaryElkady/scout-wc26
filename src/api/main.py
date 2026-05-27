@@ -470,14 +470,16 @@ def chart_top_scorers() -> dict:
 
 
 @app.get("/matches/live-upcoming")
-def matches_live_upcoming() -> dict:
+def matches_live_upcoming(league_id: Optional[int] = None) -> dict:
     table = config.table("silver_fixtures")
+    lid = str(league_id) if league_id else str(_active_league["id"])
     sql = (
         "SELECT home_team_name, away_team_name, home_score, away_score, "
         "status, CAST(match_date AS STRING) AS match_date "
         "FROM `" + table + "` "
         "WHERE match_date >= CURRENT_DATE() "
         "AND is_completed = FALSE "
+        "AND league_id = '" + _esc(lid) + "' "
         "ORDER BY match_date ASC LIMIT 10"
     )
     try:
