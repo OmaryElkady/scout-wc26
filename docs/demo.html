@@ -792,16 +792,15 @@
     <span class="league-label">Active League:</span>
     <select class="league-select" id="league-select" onchange="switchLeague(this)">
       <option value="10195" selected>UEFA WC Qualification</option>
-      <option value="77">World Cup 2026 (Coming Jun 11)</option>
       <option value="47">Premier League</option>
       <option value="42">Champions League</option>
       <option value="140">La Liga</option>
-      <option disabled>── More Leagues ──</option>
       <option value="54">Bundesliga</option>
       <option value="135">Serie A</option>
       <option value="61">Ligue 1</option>
       <option value="253">MLS</option>
       <option value="71">Brasileirao</option>
+      <option value="108">Scottish Premiership</option>
     </select>
     <span class="header-spinner" id="header-spinner"></span>
   </div>
@@ -1107,9 +1106,9 @@
   const _teamCache = {};
   const _TEAM_CACHE_TTL = 5 * 60 * 1000;
   const _leagueDisplayNames = {
-    10195: 'UEFA WC Qual', 77: 'World Cup 2026', 47: 'Premier League',
-    42: 'Champions League', 140: 'La Liga', 54: 'Bundesliga', 135: 'Serie A',
-    61: 'Ligue 1', 71: 'Brasileirao', 253: 'MLS', 108: 'Scottish Prem',
+    10195: 'UEFA WC Qual', 47: 'Premier League', 42: 'Champions League',
+    140: 'La Liga', 54: 'Bundesliga', 135: 'Serie A', 61: 'Ligue 1',
+    253: 'MLS', 71: 'Brasileirao', 108: 'Scottish Prem',
   };
   const _initSel = document.getElementById('league-select');
   let _activeLeagueId = _initSel ? parseInt(_initSel.value, 10) : 10195;
