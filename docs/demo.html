@@ -242,6 +242,18 @@
     .tab-btn:hover { background: transparent; color: var(--text); }
     .tab-btn:active { transform: none; }
     .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .league-badge {
+      display: inline-block;
+      background: var(--primary);
+      color: #fff;
+      font-size: .7rem;
+      font-weight: 700;
+      padding: 2px 9px;
+      border-radius: 10px;
+      margin-left: 8px;
+      vertical-align: middle;
+      letter-spacing: .02em;
+    }
 
     .feature-grid {
       display: grid;
@@ -934,7 +946,7 @@
       <div class="icon">🏆</div>
       <div>
         <h2>Team Browser</h2>
-        <p>World Cup qualifying teams with win / draw / loss records</p>
+        <p>World Cup qualifying teams with win / draw / loss records <span id="league-badge" class="league-badge">UEFA WC Qual</span></p>
       </div>
     </div>
     <div class="card-body">
@@ -1088,6 +1100,18 @@
 <script>
   const API = "";
   let allTeams = [];
+
+  // League-scoped team cache: { leagueId: { teams: [], ts: timestamp } }
+  const _teamCache = {};
+  const _TEAM_CACHE_TTL = 5 * 60 * 1000;
+  const _leagueDisplayNames = {
+    10195: 'UEFA WC Qual', 77: 'World Cup 2026', 47: 'Premier League',
+    42: 'Champions League', 140: 'La Liga', 78: 'Bundesliga', 135: 'Serie A',
+    71: 'Brasileirao', 61: 'Ligue 1', 6: 'AFCON', 88: 'Eredivisie',
+    9: 'Copa América', 253: 'MLS', 307: 'Saudi Pro League',
+  };
+  const _initSel = document.getElementById('league-select');
+  let _activeLeagueId = _initSel ? parseInt(_initSel.value, 10) : 10195;
 
   // ── Utilities ──────────────────────────────────────────────────────────────
 
@@ -1249,7 +1273,7 @@
     for (const action of actions) {
       switch (action.action) {
         case 'reload_teams':
-          await loadTeams();
+          await loadTeams(_activeLeagueId);
           break;
         case 'reload_charts':
           loadCharts();
@@ -1410,10 +1434,28 @@
   let _teamsSortCol = 'points';
   let _teamsSortDir = -1;
 
-  async function loadTeams() {
+  function _updateLeagueBadge(lid) {
+    const badge = document.getElementById('league-badge');
+    if (badge) badge.textContent = 'Showing: ' + (_leagueDisplayNames[lid] || `League ${lid}`);
+  }
+
+  async function loadTeams(leagueId = null) {
+    const lid = leagueId || _activeLeagueId;
+    _updateLeagueBadge(lid);
+
+    // Return instantly from cache if fresh
+    const cached = _teamCache[lid];
+    if (cached && (Date.now() - cached.ts) < _TEAM_CACHE_TTL) {
+      allTeams = cached.teams;
+      _teamsPage = 0;
+      _renderActiveTab();
+      return;
+    }
+
     setLoading("teams-spinner", null, true);
     try {
-      const res = await fetch(`${API}/teams`);
+      const url = lid ? `${API}/teams?league_id=${lid}` : `${API}/teams`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const data = await res.json();
       allTeams = (data.teams || []).map(t => ({
@@ -1422,6 +1464,7 @@
         goal_diff: t.goal_diff ?? (t.goals_for ?? 0) - (t.goals_against ?? 0),
       }));
       allTeams.sort((a, b) => b.points - a.points);
+      _teamCache[lid] = { teams: allTeams, ts: Date.now() };
       _teamsPage = 0;
       _renderActiveTab();
     } catch (err) {
@@ -2007,8 +2050,9 @@
       }, 3000);
 
       if (result.success) {
+        _activeLeagueId = leagueId;
         _showToast(`✓ Switched to ${leagueName}. Refreshing data…`, 'success');
-        loadTeams();
+        loadTeams(leagueId);
         loadCharts();
         loadMatches();
         loadLeaderboard(_lbStat);
