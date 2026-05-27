@@ -213,6 +213,13 @@ def progress_current() -> dict:
     return get_current_progress()
 
 
+@app.get("/stream/progress")
+async def legacy_progress_redirect():
+    from fastapi.responses import RedirectResponse
+
+    return RedirectResponse(url="/progress/current", status_code=307)
+
+
 @app.post("/query", response_model=QueryResponse)
 def query(request: QueryRequest) -> QueryResponse:
     from src.utils.progress import reset_progress
