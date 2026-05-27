@@ -757,9 +757,19 @@ def report(player_name: str) -> ReportResponse:
 
 
 @app.get("/teams", response_model=TeamListResponse)
-def teams() -> TeamListResponse:
-    logger.info("GET /teams")
-    sql = "SELECT * FROM `" + config.table("gold_team_summary") + "` LIMIT 100"
+def teams(league_id: Optional[int] = None) -> TeamListResponse:
+    logger.info("GET /teams: league_id=%s", league_id)
+    table = config.table("gold_team_summary")
+    lid = league_id or _active_league.get("id")
+    if lid:
+        try:
+            sql = "SELECT * FROM `" + table + "` WHERE league_id = '" + str(int(lid)) + "' LIMIT 100"
+            rows = bq.run_query(sql)
+            if rows:
+                return TeamListResponse(teams=rows)
+        except Exception:
+            pass
+    sql = "SELECT * FROM `" + table + "` LIMIT 100"
     rows = bq.run_query(sql)
     return TeamListResponse(teams=rows)
 
@@ -807,18 +817,28 @@ def players(
     position: Optional[str] = None,
     team_name: Optional[str] = None,
     nationality: Optional[str] = None,
+    league_id: Optional[int] = None,
 ) -> PlayerListResponse:
     logger.info(
-        "GET /players: position=%s team_name=%s nationality=%s",
+        "GET /players: position=%s team_name=%s nationality=%s league_id=%s",
         position,
         team_name,
         nationality,
+        league_id,
     )
-    rows = agent_tools.query_players(
-        position=position,
-        team_name=team_name,
-        nationality=nationality,
-    )
+    import src.utils.football_api as _fa_mod
+
+    original_lid = _fa_mod._WORLD_CUP_LEAGUE_ID
+    if league_id:
+        _fa_mod._WORLD_CUP_LEAGUE_ID = league_id
+    try:
+        rows = agent_tools.query_players(
+            position=position,
+            team_name=team_name,
+            nationality=nationality,
+        )
+    finally:
+        _fa_mod._WORLD_CUP_LEAGUE_ID = original_lid
     rows = rows[:50]
     return PlayerListResponse(players=rows, count=len(rows))
 
