@@ -413,51 +413,36 @@ def get_top_performers(stat: str = "goals", limit: int = 10) -> list[dict[str, A
     return rows
 
 
+# Only leagues verified to return fixture data from free-api-live-football-data.
+# Bundesliga is ID 54 on this API (not 78 as on api-football-v1).
+# World Cup 2026 (77) returns 0 matches until ~June 11 — kept as a known placeholder.
 _LEAGUE_MAP: dict[str, int] = {
+    # World Cup
     "world cup": 77,
     "world cup 2026": 77,
     "wc2026": 77,
     "wc26": 77,
     "fifa world cup": 77,
+    # WC Qualification
     "uefa wc qualification": 10195,
+    "wc qualification": 10195,
     "qualification": 10195,
+    # Top 5 European leagues
     "premier league": 47,
     "epl": 47,
-    "champions league": 42,
-    "ucl": 42,
     "la liga": 140,
-    "bundesliga": 78,
+    "bundesliga": 54,
     "serie a": 135,
     "serie a italy": 135,
     "ligue 1": 61,
-    # African competitions
-    "afcon": 6,
-    "africa cup": 6,
-    "african cup": 6,
-    "africa cup of nations": 6,
-    "caf": 6,
-    # More European
-    "eredivisie": 88,
-    "liga nos": 94,
-    "portuguese league": 94,
-    "scottish premiership": 108,
-    "turkish league": 203,
-    "super lig": 203,
-    # South American
-    "copa america": 9,
-    "conmebol": 11,
-    "brasileirao": 71,
-    "argentina": 26,
-    # Asian
-    "afc": 17,
-    "asian cup": 17,
-    # Other competitions
-    "u20 world cup": 5,
-    "nations league": 8,
-    # More popular leagues
+    # European cups
+    "champions league": 42,
+    "ucl": 42,
+    # Other verified leagues
     "mls": 253,
-    "saudi league": 307,
-    "saudi pro league": 307,
+    "brasileirao": 71,
+    "scottish premiership": 108,
+    "scottish prem": 108,
 }
 
 _LEAGUE_DISPLAY_NAMES: dict[int, str] = {
@@ -466,23 +451,12 @@ _LEAGUE_DISPLAY_NAMES: dict[int, str] = {
     47: "Premier League",
     42: "Champions League",
     140: "La Liga",
-    78: "Bundesliga",
+    54: "Bundesliga",
     135: "Serie A",
-    71: "Brasileirao",
     61: "Ligue 1",
-    6: "AFCON / Africa Cup of Nations",
-    88: "Eredivisie",
-    94: "Liga Portugal",
-    108: "Scottish Premiership",
-    203: "Süper Lig",
-    9: "Copa América",
-    11: "CONMEBOL",
-    26: "Argentine Primera División",
-    17: "AFC Asian Cup",
-    5: "U20 World Cup",
-    8: "UEFA Nations League",
+    71: "Brasileirao",
     253: "MLS",
-    307: "Saudi Pro League",
+    108: "Scottish Premiership",
 }
 
 
