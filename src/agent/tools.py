@@ -43,6 +43,13 @@ def _esc(value: str) -> str:
     return value.replace("'", "''")
 
 
+def _get_active_league_id() -> str:
+    """Return the current active league ID as a string for BigQuery STRING comparisons."""
+    import src.utils.football_api as _fa_mod
+
+    return str(_fa_mod._WORLD_CUP_LEAGUE_ID)
+
+
 def query_players(
     position: Optional[str] = None,
     nationality: Optional[str] = None,
@@ -84,7 +91,7 @@ def query_players(
         Returns an empty list if no players match the filters.
     """
     table = config.table("gold_player_stats")
-    conditions = []
+    conditions = ["league_id = '" + _esc(_get_active_league_id()) + "'"]
 
     if position:
         conditions.append("position = '" + _esc(_normalize_position(position)) + "'")
@@ -97,8 +104,8 @@ def query_players(
     if max_age is not None:
         conditions.append("age <= " + str(int(max_age)))
 
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    order_by = "" if conditions else " ORDER BY team_name, name"
+    where = "WHERE " + " AND ".join(conditions)
+    order_by = " ORDER BY team_name, name"
     sql = "SELECT * FROM `" + table + "` " + where + order_by + " LIMIT " + str(_MAX_RESULTS)
 
     logger.info(
@@ -146,6 +153,7 @@ def query_team_summary(
         Single team record. Returns an empty dict if the team is not found.
     """
     table = config.table("gold_team_summary")
+    league_filter = "league_id = '" + _esc(_get_active_league_id()) + "'"
     conditions = []
 
     if team_id is not None:
@@ -156,13 +164,13 @@ def query_team_summary(
     logger.info("query_team_summary: team_name=%s team_id=%s", team_name, team_id)
 
     if conditions:
-        where = "WHERE " + " AND ".join(conditions)
+        where = "WHERE " + league_filter + " AND " + " AND ".join(conditions)
         sql = "SELECT * FROM `" + table + "` " + where + " LIMIT 1"
         rows = bq.run_query(sql)
         logger.info("query_team_summary: found=%s", bool(rows))
         return rows[0] if rows else {}
 
-    sql = "SELECT * FROM `" + table + "` ORDER BY points DESC LIMIT " + str(_MAX_RESULTS)
+    sql = "SELECT * FROM `" + table + "` WHERE " + league_filter + " ORDER BY points DESC LIMIT " + str(_MAX_RESULTS)
     rows = bq.run_query(sql)
     logger.info("query_team_summary: returned %d teams", len(rows))
     return rows
@@ -196,14 +204,14 @@ def get_player_detail(
         Returns an empty dict if the player is not found.
     """
     table = config.table("gold_player_stats")
-    conditions = []
+    conditions = ["league_id = '" + _esc(_get_active_league_id()) + "'"]
 
     if player_id is not None:
         conditions.append("player_id = '" + _esc(str(player_id)) + "'")
     if player_name:
         conditions.append("LOWER(name) LIKE '%" + _esc(player_name.lower()) + "%'")
 
-    if not conditions:
+    if len(conditions) == 1:
         logger.warning("get_player_detail called with no filters — returning empty")
         return {}
 
@@ -249,7 +257,9 @@ def get_top_players_by_position(
     sql = (
         "SELECT * FROM `"
         + table
-        + "` WHERE position = '"
+        + "` WHERE league_id = '"
+        + _esc(_get_active_league_id())
+        + "' AND position = '"
         + _esc(_normalize_position(position))
         + "' ORDER BY age ASC LIMIT "
         + safe_limit
@@ -283,7 +293,8 @@ def get_team_roster(team_name: str) -> list[dict[str, Any]]:
     sql = (
         "SELECT player_id, name, position, age, nationality, jersey_number "
         "FROM `" + table + "` "
-        "WHERE LOWER(team_name) LIKE '%" + _esc(team_name.lower()) + "%' "
+        "WHERE league_id = '" + _esc(_get_active_league_id()) + "' "
+        "AND LOWER(team_name) LIKE '%" + _esc(team_name.lower()) + "%' "
         "ORDER BY position, name"
     )
 
@@ -310,33 +321,39 @@ def get_league_overview() -> dict[str, Any]:
         competition: str — competition name and league ID
     """
     table = config.table("gold_player_stats")
+    lid = _get_active_league_id()
+    league_filter = "WHERE league_id = '" + _esc(lid) + "'"
 
     counts_sql = (
         "SELECT COUNT(*) as total_players, COUNT(DISTINCT team_name) as total_teams "
-        "FROM `" + table + "`"
+        "FROM `" + table + "` " + league_filter
     )
     counts = bq.run_query(counts_sql)
     total_players = counts[0]["total_players"] if counts else 0
     total_teams = counts[0]["total_teams"] if counts else 0
 
-    teams_sql = "SELECT DISTINCT team_name FROM `" + table + "` ORDER BY team_name"
+    teams_sql = (
+        "SELECT DISTINCT team_name FROM `" + table + "` "
+        + league_filter + " ORDER BY team_name"
+    )
     teams = [r["team_name"] for r in bq.run_query(teams_sql)]
 
     pos_sql = (
         "SELECT position, COUNT(*) as cnt FROM `" + table + "` "
-        "GROUP BY position ORDER BY position"
+        + league_filter + " GROUP BY position ORDER BY position"
     )
     position_breakdown = {r["position"]: r["cnt"] for r in bq.run_query(pos_sql)}
 
     nat_sql = (
         "SELECT nationality, COUNT(*) as cnt FROM `" + table + "` "
-        "GROUP BY nationality ORDER BY cnt DESC LIMIT 10"
+        + league_filter + " GROUP BY nationality ORDER BY cnt DESC LIMIT 10"
     )
     top_nationalities = [
         {"nationality": r["nationality"], "count": r["cnt"]}
         for r in bq.run_query(nat_sql)
     ]
 
+    league_name = _LEAGUE_DISPLAY_NAMES.get(int(lid), f"League {lid}")
     logger.info(
         "get_league_overview: %d players across %d teams", total_players, total_teams
     )
@@ -346,7 +363,7 @@ def get_league_overview() -> dict[str, Any]:
         "teams": teams,
         "position_breakdown": position_breakdown,
         "top_nationalities": top_nationalities,
-        "competition": "UEFA World Cup Qualification (League 10195)",
+        "competition": f"{league_name} (League {lid})",
     }
 
 
@@ -410,7 +427,8 @@ _LEAGUE_MAP: dict[str, int] = {
     "ucl": 42,
     "la liga": 140,
     "bundesliga": 78,
-    "serie a": 71,
+    "serie a": 135,
+    "serie a italy": 135,
     "ligue 1": 61,
     # African competitions
     "afcon": 6,
@@ -433,8 +451,7 @@ _LEAGUE_MAP: dict[str, int] = {
     # Asian
     "afc": 17,
     "asian cup": 17,
-    # Other World Cup competitions
-    "women's world cup": 6,
+    # Other competitions
     "u20 world cup": 5,
     "nations league": 8,
     # More popular leagues
@@ -450,7 +467,8 @@ _LEAGUE_DISPLAY_NAMES: dict[int, str] = {
     42: "Champions League",
     140: "La Liga",
     78: "Bundesliga",
-    71: "Serie A / Brasileirao",
+    135: "Serie A",
+    71: "Brasileirao",
     61: "Ligue 1",
     6: "AFCON / Africa Cup of Nations",
     88: "Eredivisie",
