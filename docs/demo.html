@@ -2132,11 +2132,26 @@
   }
 
   // ── Boot ──────────────────────────────────────────────────────────────────
-  loadMatches();
-  loadTeams();
-  loadCharts();
-  loadDepthChart("England");
-  loadLeaderboard('goals');
+  // Sync dropdown to backend's active league before loading data.
+  (async () => {
+    try {
+      const res = await fetch(`${API}/admin/leagues`);
+      if (res.ok) {
+        const { active } = await res.json();
+        if (active && active.id) {
+          const sel = document.getElementById('league-select');
+          if (sel) sel.value = String(active.id);
+          _activeLeagueId = parseInt(active.id, 10);
+          _updateLeagueBadge(_activeLeagueId);
+        }
+      }
+    } catch (_) { /* fall back to hardcoded default */ }
+    loadMatches();
+    loadTeams(_activeLeagueId);
+    loadCharts();
+    loadDepthChart("England");
+    loadLeaderboard('goals');
+  })();
 </script>
 </body>
 </html>
