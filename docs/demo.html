@@ -1276,10 +1276,13 @@
         case 'reload_teams':
           await loadTeams(_activeLeagueId);
           break;
-        case 'reload_charts':
+        case 'reload_charts': {
           loadCharts();
           loadLeaderboard(_lbStat);
+          const depthInp = document.getElementById('depth-team-input');
+          loadDepthChart(depthInp && depthInp.value.trim() || 'England');
           break;
+        }
         case 'reload_matches':
           loadMatches();
           break;
@@ -1291,6 +1294,8 @@
               if (txt.toLowerCase() === action.value.toLowerCase() ||
                   String(opt.value) === String(action.value)) {
                 sel.value = opt.value;
+                _activeLeagueId = parseInt(opt.value, 10);
+                _updateLeagueBadge(_activeLeagueId);
                 break;
               }
             }
@@ -1956,7 +1961,7 @@
   async function loadMatches() {
     document.getElementById('matches-spinner')?.classList.add('visible');
     try {
-      const res = await fetch(`${API}/matches/live-upcoming`);
+      const res = await fetch(`${API}/matches/live-upcoming?league_id=${_activeLeagueId}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const { live, upcoming } = await res.json();
       _renderMatches(live || [], upcoming || []);
