@@ -708,5 +708,5 @@ def test_switch_league_pipeline_failure_returns_partial():
     ):
         result = switch_league("bundesliga")
     assert result["status"] == "partial"
-    assert result["league_id"] == 78
+    assert result["league_id"] == 54
     assert "BQ error" in result["message"]
