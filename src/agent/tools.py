@@ -532,7 +532,7 @@ def switch_league(league_name: str) -> dict[str, Any]:
     _fa_mod._WORLD_CUP_LEAGUE_ID = league_id
 
     try:
-        _direct_api_ingest(_emit=emit_progress)
+        _direct_api_ingest(_emit=emit_progress, force_refresh_fixtures=True)
     except Exception as exc:
         logger.error("switch_league: data ingest failed: %s", exc)
         emit_progress("❌ Data ingest failed", "error", 100)
@@ -568,7 +568,7 @@ def switch_league(league_name: str) -> dict[str, Any]:
     }
 
 
-def _direct_api_ingest(_emit=None) -> None:
+def _direct_api_ingest(_emit=None, force_refresh_fixtures: bool = False) -> None:
     """Write fresh fixture and squad data to Bronze tables via the football API.
 
     Mirrors the per-team pattern used by scripts/ingest_all_players.py so each
@@ -580,6 +580,9 @@ def _direct_api_ingest(_emit=None) -> None:
     When False, falls back to the original sequential loop (all teams).
 
     _emit: optional callable(step, status, progress) for progress reporting.
+    force_refresh_fixtures: bypass the Bronze cache and always fetch fresh fixtures
+        from the API. Required when switching leagues so stale cached fixtures from
+        the previous league are not used.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -592,8 +595,12 @@ def _direct_api_ingest(_emit=None) -> None:
 
     logger.info("Syncing latest football data directly from API...")
     _p("📡 Fetching fixtures from API...", "running", 25)
-    fixtures = football_api.get_world_cup_fixtures()
-    write_bronze_fixtures(fixtures)
+    try:
+        fixtures = football_api.get_world_cup_fixtures(force_refresh=force_refresh_fixtures)
+        write_bronze_fixtures(fixtures)
+    except Exception as exc:
+        logger.warning("Fixture fetch failed (non-fatal): %s", exc)
+        fixtures = []
 
     teams: dict[int, str] = {}
     for match in fixtures:
