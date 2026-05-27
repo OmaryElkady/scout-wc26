@@ -74,6 +74,9 @@ _KNOWN_LEAGUES_FOR_ACTIONS: dict[str, str] = {
 }
 
 
+_REPORT_NAME_STRIP = {"generate", "create", "make", "show", "download", "get", "build", "produce", "view", "display"}
+
+
 def _extract_player_name_from_report_q(question: str) -> str:
     """Extract player name from a report request question."""
     # "for/about <Name>"
@@ -87,14 +90,20 @@ def _extract_player_name_from_report_q(question: str) -> str:
             name = m.group(1).strip()
             if name.lower() not in {"a", "an", "the", "any", "all", "report", "scouting", "pdf"}:
                 return name
-    # "<Name>'s (scouting) report"
+    # "<Name>'s (scouting) report" — greedy match may capture a leading action verb
+    # e.g. "Generate Bellingham's scouting report" → captures "Generate Bellingham"
     m = re.search(
         r"([A-Za-z][a-zA-Z]+(?:\s+[A-Za-z][a-zA-Z]+){0,2})'s\s+(?:scouting\s+)?report",
         question,
         re.IGNORECASE,
     )
     if m:
-        return m.group(1).strip()
+        words = m.group(1).strip().split()
+        while words and words[0].lower() in _REPORT_NAME_STRIP:
+            words.pop(0)
+        name = " ".join(words)
+        if name:
+            return name
     return ""
 
 
@@ -509,6 +518,13 @@ def report_pdf(player_name: str) -> Response:
     logger.info("POST /report/pdf/%s", player_name)
 
     player = agent_tools.get_player_detail(player_name=player_name)
+    if not player:
+        # Fallback: strip leading words (handles stale "Generate Bellingham" → "Bellingham")
+        _words = player_name.strip().split()
+        if len(_words) > 1:
+            player = agent_tools.get_player_detail(player_name=" ".join(_words[1:]))
+        if not player and len(_words) > 2:
+            player = agent_tools.get_player_detail(player_name=_words[-1])
     if not player:
         raise HTTPException(status_code=404, detail=f"Player '{player_name}' not found")
 
