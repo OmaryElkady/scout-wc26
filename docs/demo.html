@@ -790,7 +790,7 @@
   </div>
   <div class="league-selector">
     <span class="league-label">Active League:</span>
-    <select class="league-select" id="league-select" onchange="switchLeague(this)">
+    <select class="league-select" id="league-select" onchange="LeagueManager.switchTo(parseInt(this.value))">
       <option value="10195" selected>UEFA WC Qualification</option>
       <option value="77">World Cup 2026 (Coming Jun 11)</option>
       <option value="47">Premier League</option>
@@ -1114,6 +1114,112 @@
   const _initSel = document.getElementById('league-select');
   let _activeLeagueId = _initSel ? parseInt(_initSel.value, 10) : 10195;
 
+  // ── LeagueManager — single source of truth for active league ──────────────
+  //
+  // All league switches go through LeagueManager.switchTo(id).
+  // All section loads read _activeLeagueId, which LeagueManager.syncDropdown()
+  // keeps in sync with the backend state fetched from GET /state.
+
+  const LeagueManager = {
+    state: null,   // populated from GET /state on init
+
+    activeId() {
+      return this.state?.active_league?.id ?? _activeLeagueId;
+    },
+
+    // Push state.active_league.id into _activeLeagueId, the dropdown, and the badge.
+    syncDropdown() {
+      const id = this.activeId();
+      _activeLeagueId = id;
+      const sel = document.getElementById('league-select');
+      if (sel) sel.value = String(id);
+      _updateLeagueBadge(id);
+    },
+
+    // Called on page load — fetches /state to align frontend with backend.
+    async init() {
+      try {
+        const res = await fetch(`${API}/state`);
+        if (res.ok) {
+          this.state = await res.json();
+          _activeLeagueId = this.state.active_league.id;
+          this.syncDropdown();
+        }
+      } catch (_) { /* fall back to hardcoded dropdown default */ }
+      loadMatches();
+      loadTeams(_activeLeagueId);
+      loadCharts();
+      loadDepthChart('England');
+      loadLeaderboard('goals');
+    },
+
+    // Switch to a new league by numeric ID. Called from dropdown onchange and
+    // from _executePageActions when the agent confirms a league switch.
+    async switchTo(leagueId) {
+      const lid = parseInt(leagueId, 10);
+      const sel = document.getElementById('league-select');
+      const opt = sel ? Array.from(sel.options).find(o => parseInt(o.value) === lid) : null;
+      const leagueName = opt
+        ? opt.textContent.replace(/ \(Coming.*\)$/, '').trim()
+        : String(lid);
+
+      const spinner = document.getElementById('header-spinner');
+      if (sel) sel.disabled = true;
+      if (spinner) spinner.classList.add('visible');
+      _showToast(`Switching to ${leagueName}…`, 'info');
+
+      _progressSteps = [];
+      const _pSteps = document.getElementById('progress-steps');
+      const _pBar   = document.getElementById('progress-bar-fill');
+      if (_pSteps) _pSteps.innerHTML = '';
+      if (_pBar)   _pBar.style.width = '0%';
+
+      try {
+        const res = await fetch(`${API}/admin/switch-league`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ league_id: lid, league_name: leagueName }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const result = await pollProgress();
+
+        setTimeout(() => {
+          const panel = document.getElementById('progress-panel');
+          if (panel && panel.classList.contains('visible')) {
+            panel.style.transition = 'opacity .9s';
+            panel.style.opacity = '0';
+            setTimeout(() => {
+              panel.classList.remove('visible');
+              panel.style.transition = '';
+              panel.style.opacity = '1';
+            }, 900);
+          }
+        }, 3000);
+
+        if (result.success) {
+          _activeLeagueId = lid;
+          if (this.state) this.state.active_league = { id: lid, display: leagueName };
+          this.syncDropdown();
+          _showToast(`✓ Switched to ${leagueName}. Refreshing data…`, 'success');
+          loadTeams(lid);
+          loadCharts();
+          loadMatches();
+          loadLeaderboard(_lbStat);
+          const depthInput = document.getElementById('depth-team-input');
+          loadDepthChart(depthInput?.value.trim() || 'England');
+        } else {
+          _showToast(`⚠ League switch completed with errors.`, 'error');
+        }
+      } catch (err) {
+        _showToast(`⚠ Switch failed: ${err.message}`, 'error');
+      } finally {
+        if (sel) sel.disabled = false;
+        if (spinner) spinner.classList.remove('visible');
+      }
+    },
+  };
+
   // ── Utilities ──────────────────────────────────────────────────────────────
 
   function setLoading(spinnerId, btnId, loading) {
@@ -1293,9 +1399,12 @@
               const txt = opt.textContent.replace(/ \(Coming.*\)$/, '').trim();
               if (txt.toLowerCase() === action.value.toLowerCase() ||
                   String(opt.value) === String(action.value)) {
-                sel.value = opt.value;
-                _activeLeagueId = parseInt(opt.value, 10);
-                _updateLeagueBadge(_activeLeagueId);
+                const newId = parseInt(opt.value, 10);
+                if (LeagueManager.state) {
+                  LeagueManager.state.active_league = { id: newId, display: txt };
+                }
+                _activeLeagueId = newId;
+                LeagueManager.syncDropdown();
                 break;
               }
             }
@@ -2024,64 +2133,7 @@
     return { success: false, error: 'Timeout after 5 minutes' };
   }
 
-  async function switchLeague(selectEl) {
-    const leagueId = parseInt(selectEl.value, 10);
-    const opt = selectEl.options[selectEl.selectedIndex];
-    const leagueName = opt.textContent.replace(/ \(Coming.*\)$/, '').trim();
-
-    const spinner = document.getElementById('header-spinner');
-    selectEl.disabled = true;
-    if (spinner) spinner.classList.add('visible');
-    _showToast(`Switching to ${leagueName}…`, 'info');
-
-    _progressSteps = [];
-    const _pSteps = document.getElementById('progress-steps');
-    const _pBar   = document.getElementById('progress-bar-fill');
-    if (_pSteps) _pSteps.innerHTML = '';
-    if (_pBar)   _pBar.style.width = '0%';
-
-    try {
-      const res = await fetch(`${API}/admin/switch-league`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ league_id: leagueId, league_name: leagueName }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const result = await pollProgress();
-
-      setTimeout(() => {
-        const panel = document.getElementById('progress-panel');
-        if (panel && panel.classList.contains('visible')) {
-          panel.style.transition = 'opacity .9s';
-          panel.style.opacity = '0';
-          setTimeout(() => {
-            panel.classList.remove('visible');
-            panel.style.transition = '';
-            panel.style.opacity = '1';
-          }, 900);
-        }
-      }, 3000);
-
-      if (result.success) {
-        _activeLeagueId = leagueId;
-        _showToast(`✓ Switched to ${leagueName}. Refreshing data…`, 'success');
-        loadTeams(leagueId);
-        loadCharts();
-        loadMatches();
-        loadLeaderboard(_lbStat);
-        const depthInput = document.getElementById('depth-team-input');
-        loadDepthChart(depthInput && depthInput.value.trim() || 'England');
-      } else {
-        _showToast(`⚠ League switch completed with errors.`, 'error');
-      }
-    } catch (err) {
-      _showToast(`⚠ Switch failed: ${err.message}`, 'error');
-    } finally {
-      selectEl.disabled = false;
-      if (spinner) spinner.classList.remove('visible');
-    }
-  }
+  // switchLeague(selectEl) removed — replaced by LeagueManager.switchTo(id)
 
   // ── Top Performers Leaderboard ────────────────────────────────────────────
 
@@ -2138,26 +2190,9 @@
   }
 
   // ── Boot ──────────────────────────────────────────────────────────────────
-  // Sync dropdown to backend's active league before loading data.
-  (async () => {
-    try {
-      const res = await fetch(`${API}/admin/leagues`);
-      if (res.ok) {
-        const { active } = await res.json();
-        if (active && active.id) {
-          const sel = document.getElementById('league-select');
-          if (sel) sel.value = String(active.id);
-          _activeLeagueId = parseInt(active.id, 10);
-          _updateLeagueBadge(_activeLeagueId);
-        }
-      }
-    } catch (_) { /* fall back to hardcoded default */ }
-    loadMatches();
-    loadTeams(_activeLeagueId);
-    loadCharts();
-    loadDepthChart("England");
-    loadLeaderboard('goals');
-  })();
+  // LeagueManager.init() fetches GET /state to sync the dropdown and active
+  // league ID from the backend before loading all sections.
+  LeagueManager.init();
 </script>
 </body>
 </html>
