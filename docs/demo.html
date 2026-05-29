@@ -719,6 +719,48 @@
     }
     .lb-spinner.visible { display: block; }
 
+    /* ── Scout Card (chat widget for "generate report" queries) ── */
+    .scout-card {
+      background: var(--surface);
+      border: 1px solid #3b82f6;
+      border-radius: 12px;
+      padding: 18px 20px;
+    }
+    .scout-card-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .scout-pos-emoji { font-size: 28px; flex-shrink: 0; line-height: 1; padding-top: 2px; }
+    .scout-name { font-size: 20px; font-weight: 700; color: #fff; display: block; line-height: 1.25; }
+    .scout-meta { font-size: 13px; color: var(--muted); margin-top: 4px; display: block; }
+    .scout-assessment { color: var(--text); line-height: 1.65; font-size: 14px; margin-bottom: 14px; }
+    .scout-strengths { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+    .scout-rec {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 3px 12px;
+      border-radius: 20px;
+      margin-bottom: 14px;
+    }
+    .btn-download {
+      background: #3b82f6;
+      color: #fff;
+      border: none;
+      padding: 9px 18px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: var(--font);
+      display: inline-block;
+      transition: background .15s;
+    }
+    .btn-download:hover  { background: #2563eb; }
+    .btn-download:active { transform: scale(.97); }
+
     /* ── League Selector ── */
     .league-selector {
       display: flex;
@@ -1090,7 +1132,7 @@
           id="pdf-input"
           placeholder="e.g. Mbappe, Vinicius, Bellingham"
         />
-        <button id="pdf-btn" onclick="downloadPdf()">Generate PDF Report</button>
+        <button id="pdf-btn" onclick="downloadPdf()">Download PDF Report</button>
       </div>
       <div class="spinner" id="pdf-spinner"></div>
       <div class="answer-box" id="pdf-status"></div>
@@ -1466,8 +1508,50 @@
         case 'show_toast':
           _showToast(action.message || '', action.type || 'info');
           break;
+        case 'show_scout_card': {
+          const pName = action.player_name;
+          if (!pName) break;
+          const box = document.getElementById('query-answer');
+          if (box) {
+            box.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:4px 0">⟳ Loading scouting card for ${_escHtml(pName)}…</div>`;
+            box.className = 'answer-box visible';
+          }
+          try {
+            const res = await fetch(`${API}/report/${encodeURIComponent(pName)}`, { method: 'POST' });
+            if (!res.ok) throw new Error(res.status === 404 ? `Player "${pName}" not found` : `Server error ${res.status}`);
+            const r = await res.json();
+            const posEmoji = r.position === 'GK' ? '🧤' : r.position === 'DEF' ? '🛡️' : r.position === 'MID' ? '⚙️' : '⚡';
+            const strengthsHtml = r.strengths && r.strengths.length
+              ? `<div class="scout-strengths">${r.strengths.map(s => `<span class="strength-tag">${_escHtml(s)}</span>`).join('')}</div>`
+              : '';
+            const recHtml = r.recommendation
+              ? `<div class="scout-rec ${recClass(r.recommendation)}">${_escHtml(r.recommendation)}</div>`
+              : '';
+            if (box) box.innerHTML = `<div class="scout-card">
+              <div class="scout-card-header">
+                <span class="scout-pos-emoji">${posEmoji}</span>
+                <div>
+                  <span class="scout-name">${_escHtml(r.player_name)}</span>
+                  <span class="scout-meta">${_escHtml(r.position)} · ${_escHtml(r.team)}${r.age ? ' · Age ' + r.age : ''}</span>
+                </div>
+              </div>
+              <div class="scout-assessment">${_escHtml(r.summary || '—')}</div>
+              ${strengthsHtml}${recHtml}
+              <button class="btn-download" onclick="downloadPDFReport(${JSON.stringify(r.player_name)})">⬇ Download Full PDF Report</button>
+            </div>`;
+          } catch (err) {
+            if (box) box.innerHTML = `<div style="color:var(--red);font-size:14px">⚠ ${_escHtml(err.message)}</div>`;
+          }
+          break;
+        }
       }
     }
+  }
+
+  function _escHtml(str) {
+    const d = document.createElement('div');
+    d.textContent = String(str ?? '');
+    return d.innerHTML;
   }
 
   async function _typewriter(inputEl, text, msPerChar = 45) {
@@ -1997,6 +2081,40 @@
       showError("pdf-status", err.message || "Failed to generate PDF");
     } finally {
       setLoading("pdf-spinner", "pdf-btn", false);
+    }
+  }
+
+  // Called from the "Download Full PDF Report" button inside a scout card.
+  async function downloadPDFReport(name) {
+    const input = document.getElementById('pdf-input');
+    if (input) input.value = name;
+    const pdfSection = document.getElementById('section-pdf-report');
+    if (pdfSection) pdfSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    await new Promise(r => setTimeout(r, 400));
+    const statusEl = document.getElementById('pdf-status');
+    if (statusEl) { statusEl.className = 'answer-box'; statusEl.textContent = ''; }
+    setLoading('pdf-spinner', 'pdf-btn', true);
+    try {
+      const res = await fetch(`${API}/report/pdf/${encodeURIComponent(name)}`, { method: 'POST' });
+      if (res.status === 404) throw new Error(`Player "${name}" not found in database`);
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${name.replace(/\s+/g, '_')}_scouting_report.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      if (statusEl) {
+        statusEl.textContent = `✓ PDF generated for ${name} — check your downloads`;
+        statusEl.className = 'answer-box visible pdf-success';
+      }
+    } catch (err) {
+      showError('pdf-status', err.message || 'Failed to generate PDF');
+    } finally {
+      setLoading('pdf-spinner', 'pdf-btn', false);
     }
   }
 
