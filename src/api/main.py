@@ -173,17 +173,23 @@ def _infer_page_actions(question: str, answer: str) -> list[dict]:
         ).strip() or question
         actions.append({"action": "fill_chart_input", "text": chart_text})
 
-    # Report detection: explicit "generate/download/show report for X" → PDF flow
+    # Report detection: "download/export/save/pdf" → PDF download flow;
+    # "generate/show/create/make" → scout card preview in chat
     is_report_q = any(w in q for w in ("report", "scouting report"))
-    is_explicit_report = is_report_q and any(
-        w in q for w in ("generate", "download", "create", "make", "get", "show")
-    )
-    if is_explicit_report:
+    is_download_report = is_report_q and any(w in q for w in ("download", "export", "save", "pdf"))
+    is_preview_report = is_report_q and any(w in q for w in ("generate", "show", "create", "make")) and not is_download_report
+    if is_download_report:
         player_name = _extract_player_name_from_report_q(question)
         actions.append({"action": "navigate_to_section", "section": "reports"})
         if player_name:
             actions.append({"action": "fill_report_input", "player_name": player_name})
             actions.append({"action": "trigger_report_generate"})
+    elif is_preview_report:
+        player_name = _extract_player_name_from_report_q(question)
+        if player_name:
+            actions.append({"action": "show_scout_card", "player_name": player_name})
+        else:
+            actions.append({"action": "navigate_to_section", "section": "reports"})
     elif is_report_q and any(w in a for w in ("assessment", "report", "position", "nationality", "age")):
         actions.append({"action": "navigate_to_section", "section": "reports"})
 
@@ -660,14 +666,24 @@ def report_pdf(player_name: str) -> Response:
 
     hdr_left_style = _style("hl", fontName="Helvetica-Bold", fontSize=11, textColor=WHITE)
     hdr_right_style = _style("hr2", fontName="Helvetica", fontSize=9, textColor=WHITE, alignment=2)
-    name_style = _style("nm", fontName="Helvetica-Bold", fontSize=24, spaceAfter=4, textColor=colors.black)
-    subtitle_style = _style("sub", fontName="Helvetica", fontSize=14, textColor=MUTED, spaceAfter=10)
+    name_style = _style("nm", fontName="Helvetica-Bold", fontSize=24, leading=30, spaceAfter=10, textColor=colors.black)
+    subtitle_style = _style("sub", fontName="Helvetica", fontSize=14, leading=18, textColor=MUTED, spaceAfter=14)
     section_style = _style("sec", fontName="Helvetica-Bold", fontSize=11, textColor=colors.black, spaceBefore=14, spaceAfter=4)
     body_style = _style("bd", fontName="Helvetica", fontSize=11, leading=16, spaceAfter=4)
     assess_style = _style("assess", fontName="Helvetica", fontSize=11, leading=17, leftIndent=4, rightIndent=4)
     footer_white_style = _style("fw", fontName="Helvetica", fontSize=9, textColor=WHITE, alignment=1)
 
     story = []
+
+    # Thin blue accent bar at very top of page
+    accent_tbl = Table([[""]], colWidths=[usable_w])
+    accent_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), BLUE),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    story.append(accent_tbl)
+    story.append(Spacer(1, 0.06 * inch))
 
     # Dark header bar: "SCOUT WC26" left, date right
     today_str = date.today().strftime("%d %b %Y")
@@ -696,7 +712,7 @@ def report_pdf(player_name: str) -> Response:
     stats_data = [
         ["POSITION", player.get("position", "—"), "TEAM", team_name or "—"],
         ["AGE", str(player.get("age", "—")), "MATCHES", str(_matches)],
-        ["NATIONALITY", player.get("nationality", "—"), "W / D / L", f"{_wins} / {_draws} / {_losses}"],
+        ["NATIONALITY", player.get("nationality", "—"), "RECORD", f"{_wins}W {_draws}D {_losses}L"],
         ["JERSEY #", str(player.get("jersey_number", "—")), "POINTS", str(_points)],
     ]
     if _top_stat_label:
@@ -721,7 +737,7 @@ def report_pdf(player_name: str) -> Response:
     story.append(stats_tbl)
     story.append(Spacer(1, 0.15 * inch))
 
-    # Squad roster in 3 columns: GK | DEF/MID | FWD
+    # Squad roster in 4 columns: GK | DEF | MID | FWD
     story.append(Paragraph("SQUAD ROSTER", section_style))
     story.append(HRFlowable(width="100%", thickness=1.5, color=BLUE, spaceAfter=8))
 
@@ -731,18 +747,20 @@ def report_pdf(player_name: str) -> Response:
             pos = p.get("position", "UNKNOWN")
             pos_groups.setdefault(pos, []).append(p.get("name", ""))
         gk = pos_groups.get("GK", [])
-        mid_def = pos_groups.get("DEF", []) + pos_groups.get("MID", [])
+        def_players = pos_groups.get("DEF", [])
+        mid_players = pos_groups.get("MID", [])
         fwd = pos_groups.get("FWD", [])
-        max_rows = max(len(gk), len(mid_def), len(fwd), 1)
-        roster_data = [["GK", "DEF / MID", "FWD"]]
+        max_rows = max(len(gk), len(def_players), len(mid_players), len(fwd), 1)
+        roster_data = [["GK", "DEF", "MID", "FWD"]]
         for i in range(max_rows):
             roster_data.append([
                 gk[i] if i < len(gk) else "",
-                mid_def[i] if i < len(mid_def) else "",
+                def_players[i] if i < len(def_players) else "",
+                mid_players[i] if i < len(mid_players) else "",
                 fwd[i] if i < len(fwd) else "",
             ])
-        cw3 = usable_w / 3
-        roster_tbl = Table(roster_data, colWidths=[cw3] * 3)
+        cw4 = usable_w / 4
+        roster_tbl = Table(roster_data, colWidths=[cw4] * 4)
         roster_tbl.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), DARK),
             ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
