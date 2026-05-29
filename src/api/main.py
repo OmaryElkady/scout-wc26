@@ -58,6 +58,22 @@ _DEMO_HTML = pathlib.Path(__file__).parent.parent.parent / "docs" / "demo.html"
 # In-memory active league state (session-scoped; resets on container restart).
 _active_league: dict = {"id": config.LEAGUE_ID, "name": "FIFA World Cup Qualification UEFA"}
 
+# Canonical league list — mirrors the frontend dropdown and GET /state response.
+# Only leagues verified to return fixture data from free-api-live-football-data are included.
+_AVAILABLE_LEAGUES: list[dict] = [
+    {"id": 10195, "display": "UEFA WC Qualification",  "season": 2024, "primary": True},
+    {"id": 77,    "display": "World Cup 2026",          "season": 2026, "primary": True},
+    {"id": 47,    "display": "Premier League",          "season": 2024, "primary": True},
+    {"id": 42,    "display": "Champions League",        "season": 2024, "primary": True},
+    {"id": 140,   "display": "La Liga",                 "season": 2024, "primary": True},
+    {"id": 54,    "display": "Bundesliga",              "season": 2024, "primary": False},
+    {"id": 135,   "display": "Serie A",                 "season": 2024, "primary": False},
+    {"id": 61,    "display": "Ligue 1",                 "season": 2024, "primary": False},
+    {"id": 253,   "display": "MLS",                     "season": 2025, "primary": False},
+    {"id": 71,    "display": "Brasileirao",             "season": 2025, "primary": False},
+    {"id": 108,   "display": "Scottish Prem",           "season": 2024, "primary": False},
+]
+
 _KNOWN_LEAGUES_FOR_ACTIONS: dict[str, str] = {
     "premier league": "Premier League",
     "epl": "Premier League",
@@ -128,13 +144,15 @@ def _infer_page_actions(question: str, answer: str) -> list[dict]:
             if key in combined:
                 matched_league = display
                 break
+        # update_league_selector MUST come first so _activeLeagueId is correct
+        # when the subsequent reload actions read it.
+        if matched_league:
+            actions.append({"action": "update_league_selector", "value": matched_league})
         actions += [
             {"action": "reload_teams"},
             {"action": "reload_charts"},
             {"action": "reload_matches"},
         ]
-        if matched_league:
-            actions.append({"action": "update_league_selector", "value": matched_league})
         actions.append({"action": "show_toast", "message": "✓ League switched — data refreshed!", "type": "success"})
 
     elif any(w in q for w in ("refresh", "sync", "update data", "get latest", "pull latest")):
@@ -213,6 +231,20 @@ def root() -> FileResponse:
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "model": _MODEL, "dataset": config.BQ_DATASET}
+
+
+@app.get("/state")
+def get_state() -> dict:
+    """Single source of truth for frontend state — active league and available leagues."""
+    active_id = _active_league["id"]
+    display = next(
+        (lg["display"] for lg in _AVAILABLE_LEAGUES if lg["id"] == active_id),
+        _active_league.get("name", ""),
+    )
+    return {
+        "active_league": {"id": active_id, "display": display},
+        "available_leagues": _AVAILABLE_LEAGUES,
+    }
 
 
 @app.get("/progress/current")
@@ -525,13 +557,28 @@ def report_pdf(player_name: str) -> Response:
     logger.info("POST /report/pdf/%s", player_name)
 
     player = agent_tools.get_player_detail(player_name=player_name)
+    _words = player_name.strip().split()
+    if not player and len(_words) > 1:
+        # Strip leading action word (handles stale "Generate Bellingham" → "Bellingham")
+        player = agent_tools.get_player_detail(player_name=" ".join(_words[1:]))
+    if not player and len(_words) > 2:
+        player = agent_tools.get_player_detail(player_name=_words[-1])
     if not player:
-        # Fallback: strip leading words (handles stale "Generate Bellingham" → "Bellingham")
-        _words = player_name.strip().split()
+        # Last resort: search across ALL leagues (handles requests while a different league is active)
+        _names_to_try = [player_name]
         if len(_words) > 1:
-            player = agent_tools.get_player_detail(player_name=" ".join(_words[1:]))
-        if not player and len(_words) > 2:
-            player = agent_tools.get_player_detail(player_name=_words[-1])
+            _names_to_try.append(" ".join(_words[1:]))
+        if len(_words) > 2:
+            _names_to_try.append(_words[-1])
+        for _n in _names_to_try:
+            _sql = (
+                "SELECT * FROM `" + config.table("gold_player_stats") + "` "
+                "WHERE LOWER(name) LIKE '%" + _esc(_n.lower()) + "%' LIMIT 1"
+            )
+            _rows = bq.run_query(_sql)
+            if _rows:
+                player = _rows[0]
+                break
     if not player:
         raise HTTPException(status_code=404, detail=f"Player '{player_name}' not found")
 
@@ -813,9 +860,14 @@ def admin_switch_league(body: SwitchLeagueRequest) -> dict:
         args=(body.league_name,),
         daemon=True,
     ).start()
+    display = next(
+        (lg["display"] for lg in _AVAILABLE_LEAGUES if lg["id"] == body.league_id),
+        body.league_name,
+    )
     return {
         "status": "started",
-        "message": f"Switching to '{body.league_name}'...",
+        "message": f"Switching to '{display}'...",
+        "league": {"id": body.league_id, "display": display},
     }
 
 
