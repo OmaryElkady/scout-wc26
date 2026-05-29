@@ -622,8 +622,15 @@ def _direct_api_ingest(_emit=None, force_refresh_fixtures: bool = False) -> None
                 for tid, tname in team_list
             }
             for future in as_completed(futures):
-                future.result()
-                completed += 1
+                tid, tname = futures[future]
+                try:
+                    future.result()
+                    completed += 1
+                except Exception as exc:
+                    logger.warning(
+                        "Squad fetch failed for team %s (%s): %s — skipping",
+                        tid, tname, exc,
+                    )
                 pct = 35 + int(25 * completed / max(total, 1))
                 _p(
                     f"👥 Fetching squads ({completed}/{total})...",
@@ -636,8 +643,14 @@ def _direct_api_ingest(_emit=None, force_refresh_fixtures: bool = False) -> None
     else:
         _p("👥 Fetching player squads...", "running", 45)
         for team_id, team_name in teams.items():
-            players = football_api.get_players_by_team(team_id)
-            write_bronze_team_squads(team_id, players, team_name=team_name)
+            try:
+                players = football_api.get_players_by_team(team_id)
+                write_bronze_team_squads(team_id, players, team_name=team_name)
+            except Exception as exc:
+                logger.warning(
+                    "Squad fetch failed for team %s (%s): %s — skipping",
+                    team_id, team_name, exc,
+                )
 
     # Top performers (supplementary — non-fatal if endpoint not available for this league)
     try:
