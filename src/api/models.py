@@ -23,6 +23,12 @@ class ReportResponse(BaseModel):
     team: str
     nationality: str
     age: int | None = None
+    jersey: int | None = None
+    wins: int | None = None
+    draws: int | None = None
+    losses: int | None = None
+    points: int | None = None
+    matches: int | None = None
     summary: str
     strengths: list[str]
     recommendation: str
