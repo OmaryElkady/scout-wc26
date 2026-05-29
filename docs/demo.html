@@ -720,32 +720,32 @@
     }
     .lb-spinner.visible { display: block; }
 
-    /* ── Scout Card (chat widget for "generate report" queries) ── */
-    .scout-card {
-      background: var(--surface);
-      border: 1px solid #3b82f6;
-      border-radius: 12px;
-      padding: 18px 20px;
-    }
-    .scout-card-header {
+    /* ── Report card — performance row & download button ── */
+    .report-perf {
       display: flex;
-      align-items: flex-start;
-      gap: 14px;
-      margin-bottom: 14px;
+      padding: 12px 22px;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      background: rgba(255,255,255,.02);
     }
-    .scout-pos-emoji { font-size: 28px; flex-shrink: 0; line-height: 1; padding-top: 2px; }
-    .scout-name { font-size: 20px; font-weight: 700; color: #fff; display: block; line-height: 1.25; }
-    .scout-meta { font-size: 13px; color: var(--muted); margin-top: 4px; display: block; }
-    .scout-assessment { color: var(--text); line-height: 1.65; font-size: 14px; margin-bottom: 14px; }
-    .scout-strengths { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-    .scout-rec {
+    .report-perf-stat {
+      flex: 1;
+      text-align: center;
+      padding: 4px 8px;
+    }
+    .report-perf-stat + .report-perf-stat { border-left: 1px solid var(--border); }
+    .report-perf-value { font-size: 17px; font-weight: 700; color: #fff; line-height: 1.3; }
+    .report-perf-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-top: 2px; }
+    .wdl-chip {
       display: inline-block;
-      font-size: 12px;
+      padding: 1px 7px;
+      border-radius: 10px;
+      font-size: 11px;
       font-weight: 600;
-      padding: 3px 12px;
-      border-radius: 20px;
-      margin-bottom: 14px;
     }
+    .wdl-w { background: rgba(63,185,80,.15);  color: var(--green); }
+    .wdl-d { background: rgba(100,116,139,.15); color: #94a3b8; }
+    .wdl-l { background: rgba(239,68,68,.15);   color: var(--red); }
     .btn-download {
       background: #3b82f6;
       color: #fff;
@@ -971,6 +971,7 @@
             <div class="player-meta" id="report-meta"></div>
           </div>
         </div>
+        <div class="report-perf" id="report-perf" style="display:none"></div>
         <div class="report-body">
           <div class="report-section">
             <div class="report-label">Assessment</div>
@@ -980,6 +981,7 @@
             <div class="report-label">Key Strengths</div>
             <div class="strengths-list" id="report-strengths"></div>
           </div>
+          <div class="report-section" style="margin-bottom:0;padding-top:4px" id="report-actions"></div>
         </div>
       </div>
     </div>
@@ -1456,13 +1458,14 @@
         }
         case 'navigate_to_section': {
           const idMap = {
-            charts:          'section-analytics',
-            reports:         'section-pdf-report',
-            'pdf-report':    'section-pdf-report',
-            teams:           'section-teams',
-            agent:           'section-agent',
+            charts:           'section-analytics',
+            reports:          'section-pdf-report',
+            'pdf-report':     'section-pdf-report',
+            'player-report':  'section-reports',
+            teams:            'section-teams',
+            agent:            'section-agent',
             'top-performers': 'section-top-performers',
-            leaderboard:     'section-top-performers',
+            leaderboard:      'section-top-performers',
           };
           const el = document.getElementById(idMap[action.section] || action.section);
           if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1514,34 +1517,18 @@
           if (!pName) break;
           const box = document.getElementById('query-answer');
           if (box) {
-            box.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:4px 0">⟳ Loading scouting card for ${_escHtml(pName)}…</div>`;
+            box.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:4px 0">⟳ Loading scouting report for ${_escHtml(pName)}…</div>`;
             box.className = 'answer-box visible';
           }
-          try {
-            const res = await fetch(`${API}/report/${encodeURIComponent(pName)}`, { method: 'POST' });
-            if (!res.ok) throw new Error(res.status === 404 ? `Player "${pName}" not found` : `Server error ${res.status}`);
-            const r = await res.json();
-            const posEmoji = r.position === 'GK' ? '🧤' : r.position === 'DEF' ? '🛡️' : r.position === 'MID' ? '⚙️' : '⚡';
-            const strengthsHtml = r.strengths && r.strengths.length
-              ? `<div class="scout-strengths">${r.strengths.map(s => `<span class="strength-tag">${_escHtml(s)}</span>`).join('')}</div>`
-              : '';
-            const recHtml = r.recommendation
-              ? `<div class="scout-rec ${recClass(r.recommendation)}">${_escHtml(r.recommendation)}</div>`
-              : '';
-            if (box) box.innerHTML = `<div class="scout-card">
-              <div class="scout-card-header">
-                <span class="scout-pos-emoji">${posEmoji}</span>
-                <div>
-                  <span class="scout-name">${_escHtml(r.player_name)}</span>
-                  <span class="scout-meta">${_escHtml(r.position)} · ${_escHtml(r.team)}${r.age ? ' · Age ' + r.age : ''}</span>
-                </div>
-              </div>
-              <div class="scout-assessment">${_escHtml(r.summary || '—')}</div>
-              ${strengthsHtml}${recHtml}
-              <button class="btn-download" onclick="downloadPDFReport(${JSON.stringify(r.player_name)})">⬇ Download Full PDF Report</button>
-            </div>`;
-          } catch (err) {
-            if (box) box.innerHTML = `<div style="color:var(--red);font-size:14px">⚠ ${_escHtml(err.message)}</div>`;
+          // Pre-fill the player-input so fetchReport() picks up the name
+          const playerInput = document.getElementById('player-input');
+          if (playerInput) playerInput.value = pName;
+          const ok = await fetchReport();
+          if (ok) {
+            document.getElementById('section-reports')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            if (box) box.innerHTML = `📋 Scouting report generated for <strong>${_escHtml(pName)}</strong> — <a href="#section-reports" style="color:#3b82f6">view below ↓</a>`;
+          } else if (box && !box.querySelector('[style*="color:var(--red)"]')) {
+            box.innerHTML = `<div style="color:var(--red);font-size:14px">⚠ Could not generate report for "${_escHtml(pName)}"</div>`;
           }
           break;
         }
@@ -1578,12 +1565,32 @@
     return "rec-pass";
   }
 
+  function recBadgeStyle(rec) {
+    if (!rec) return "";
+    const r = rec.toLowerCase();
+    if (r.includes("priority")) return "background:rgba(16,185,129,.15);color:#10b981;border:1px solid rgba(16,185,129,.3)";
+    if (r.includes("monitor"))  return "background:rgba(245,158,11,.15);color:#f59e0b;border:1px solid rgba(245,158,11,.3)";
+    return "background:rgba(239,68,68,.15);color:#ef4444;border:1px solid rgba(239,68,68,.3)";
+  }
+
+  function _playerInitials(name) {
+    return (name || "?").split(" ").map(w => w[0] || "").slice(0, 2).join("").toUpperCase() || "?";
+  }
+
+  function _avatarColor(name) {
+    const palette = ["#3b82f6","#8b5cf6","#10b981","#f59e0b","#ef4444","#06b6d4"];
+    return palette[(name || "").charCodeAt(0) % palette.length];
+  }
+
+  // Populates the report card and returns true on success, false on failure.
   async function fetchReport() {
     const name = document.getElementById("player-input").value.trim();
-    if (!name) return;
+    if (!name) return false;
 
     document.getElementById("player-error").className = "answer-box";
     document.getElementById("report-card").className = "report-card";
+    const perfEl = document.getElementById("report-perf");
+    if (perfEl) perfEl.style.display = "none";
     setLoading("player-spinner", "player-btn", true);
 
     try {
@@ -1595,32 +1602,61 @@
       if (!res.ok) throw new Error(`Server error ${res.status}`);
 
       const r = await res.json();
+      const displayName = r.player_name || name;
 
-      document.getElementById("report-avatar").textContent =
-        r.position === "GK" ? "🧤" :
-        r.position === "DEF" ? "🛡️" :
-        r.position === "MID" ? "⚙️" : "⚡";
+      // Initials avatar
+      const avatarEl = document.getElementById("report-avatar");
+      avatarEl.textContent = _playerInitials(displayName);
+      avatarEl.style.background = _avatarColor(displayName);
+      avatarEl.style.fontSize = "18px";
+      avatarEl.style.fontWeight = "700";
+      avatarEl.style.letterSpacing = "-1px";
 
-      document.getElementById("report-name").textContent = r.player_name;
+      document.getElementById("report-name").textContent = displayName;
 
+      // Meta chips
       const meta = document.getElementById("report-meta");
       meta.innerHTML = [
-        r.position && `<span class="meta-chip">${r.position}</span>`,
-        r.team      && `<span class="meta-chip">🏳️ ${r.team}</span>`,
+        r.position && `<span class="meta-chip">${_escHtml(r.position)}</span>`,
+        r.team      && `<span class="meta-chip">🏳️ ${_escHtml(r.team)}</span>`,
+        r.nationality && r.nationality !== r.team && `<span class="meta-chip">${_escHtml(r.nationality)}</span>`,
         r.age       && `<span class="meta-chip">Age ${r.age}</span>`,
-        r.recommendation && `<span class="rec-chip ${recClass(r.recommendation)}">${r.recommendation}</span>`,
+        r.jersey != null && `<span class="meta-chip">#${r.jersey}</span>`,
+        r.recommendation && `<span class="rec-chip ${recClass(r.recommendation)}" style="${recBadgeStyle(r.recommendation)}">${_escHtml(r.recommendation)}</span>`,
       ].filter(Boolean).join("");
+
+      // Performance row (team stats)
+      if (perfEl && (r.matches != null || r.wins != null || r.points != null)) {
+        const hasRecord = r.wins != null && r.draws != null && r.losses != null;
+        const recordHtml = hasRecord
+          ? `<span class="wdl-chip wdl-w">${r.wins}W</span> <span class="wdl-chip wdl-d">${r.draws}D</span> <span class="wdl-chip wdl-l">${r.losses}L</span>`
+          : "—";
+        perfEl.innerHTML = [
+          r.matches != null ? `<div class="report-perf-stat"><div class="report-perf-value">${r.matches}</div><div class="report-perf-label">Matches</div></div>` : "",
+          `<div class="report-perf-stat"><div class="report-perf-value" style="font-size:13px;line-height:1.8">${recordHtml}</div><div class="report-perf-label">Record</div></div>`,
+          r.points != null ? `<div class="report-perf-stat"><div class="report-perf-value">${r.points}</div><div class="report-perf-label">Points</div></div>` : "",
+        ].filter(Boolean).join("");
+        perfEl.style.display = "flex";
+      }
 
       document.getElementById("report-summary").textContent = r.summary || "—";
 
       const strengths = document.getElementById("report-strengths");
       strengths.innerHTML = (r.strengths || [])
-        .map(s => `<span class="strength-tag">${s}</span>`)
+        .map(s => `<span class="strength-tag">${_escHtml(s)}</span>`)
         .join("");
 
+      // Download button
+      const actionsEl = document.getElementById("report-actions");
+      if (actionsEl) {
+        actionsEl.innerHTML = `<button class="btn-download" onclick="downloadPDFReport(${JSON.stringify(displayName)})">⬇ Download Full PDF Report</button>`;
+      }
+
       document.getElementById("report-card").className = "report-card visible";
+      return true;
     } catch (err) {
       showError("player-error", err.message || "Failed to generate report");
+      return false;
     } finally {
       setLoading("player-spinner", "player-btn", false);
     }
