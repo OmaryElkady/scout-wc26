@@ -189,7 +189,7 @@ def _infer_page_actions(question: str, answer: str) -> list[dict]:
         if player_name:
             actions.append({"action": "show_scout_card", "player_name": player_name})
         else:
-            actions.append({"action": "navigate_to_section", "section": "reports"})
+            actions.append({"action": "navigate_to_section", "section": "player-report"})
     elif is_report_q and any(w in a for w in ("assessment", "report", "position", "nationality", "age")):
         actions.append({"action": "navigate_to_section", "section": "reports"})
 
@@ -825,7 +825,33 @@ def report(player_name: str) -> ReportResponse:
     result = scout_agent.generate_scouting_report(player_name)
     if not result:
         raise HTTPException(status_code=404, detail=f"Player '{player_name}' not found")
-    return ReportResponse(**result)
+
+    jersey = wins = draws = losses = points = matches = None
+    try:
+        player = agent_tools.get_player_detail(player_name=player_name)
+        if player:
+            jersey = player.get("jersey_number")
+            team_name = player.get("team_name", "")
+            if team_name:
+                team = agent_tools.query_team_summary(team_name=team_name)
+                if team:
+                    wins = team.get("wins")
+                    draws = team.get("draws")
+                    losses = team.get("losses")
+                    points = team.get("points")
+                    matches = team.get("matches_played")
+    except Exception:
+        pass
+
+    return ReportResponse(
+        **result,
+        jersey=jersey,
+        wins=wins,
+        draws=draws,
+        losses=losses,
+        points=points,
+        matches=matches,
+    )
 
 
 @app.get("/teams", response_model=TeamListResponse)
