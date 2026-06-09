@@ -52,6 +52,7 @@ def _normalize_match(m: dict, *, is_live: bool) -> dict:
     }
 
 
+
 _MODEL = "gemini-2.5-flash"
 _DEMO_HTML = pathlib.Path(__file__).parent.parent.parent / "docs" / "demo.html"
 
@@ -230,8 +231,16 @@ app.add_middleware(
 
 
 @app.get("/")
-def root() -> FileResponse:
-    return FileResponse(_DEMO_HTML, media_type="text/html")
+def serve_demo() -> FileResponse:
+    return FileResponse(
+        _DEMO_HTML,
+        media_type="text/html",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.get("/health")
@@ -507,39 +516,140 @@ def chart_top_scorers() -> dict:
     }
 
 
+_LEAGUE_NAME_BY_ID: dict[str, str] = {str(lg["id"]): lg["display"] for lg in _AVAILABLE_LEAGUES}
+
+
+def _row_to_match(row: dict, *, is_completed: bool) -> dict:
+    league_id = str(row.get("league_id", ""))
+    return {
+        "fixture_id": row.get("fixture_id"),
+        "home_team": row.get("home_team_name", ""),
+        "away_team": row.get("away_team_name", ""),
+        "home_score": row.get("home_score"),
+        "away_score": row.get("away_score"),
+        "status": row.get("status", "") or ("FT" if is_completed else "NS"),
+        "match_date": row.get("match_date"),
+        "match_time": None,
+        "league_id": league_id,
+        "league_name": _LEAGUE_NAME_BY_ID.get(league_id, f"League {league_id}"),
+        "is_completed": is_completed,
+    }
+
+
 @app.get("/matches/live-upcoming")
 def matches_live_upcoming(league_id: Optional[int] = None) -> dict:
+    """Return live/upcoming fixtures across all verified leagues.
+
+    Falls back to the most-recent completed matches (with scores) when no
+    upcoming fixtures exist — so the demo dashboard is always populated.
+    Pass ?league_id=X to restrict to a single league.
+    """
     table = config.table("silver_fixtures")
-    lid = str(league_id) if league_id else str(_active_league["id"])
-    sql = (
-        "SELECT home_team_name, away_team_name, home_score, away_score, "
-        "status, CAST(match_date AS STRING) AS match_date "
+    league_clause = ""
+    if league_id is not None:
+        league_clause = " AND league_id = '" + _esc(str(int(league_id))) + "'"
+
+    upcoming_sql = (
+        "SELECT fixture_id, home_team_name, away_team_name, "
+        "home_score, away_score, status, "
+        "CAST(match_date AS STRING) AS match_date, league_id "
         "FROM `" + table + "` "
         "WHERE match_date >= CURRENT_DATE() "
-        "AND is_completed = FALSE "
-        "AND league_id = '" + _esc(lid) + "' "
-        "ORDER BY match_date ASC LIMIT 10"
+        "AND is_completed = FALSE" + league_clause + " "
+        "ORDER BY match_date ASC LIMIT 20"
+    )
+
+    try:
+        upcoming_rows = bq.run_query(upcoming_sql)
+    except Exception as exc:
+        logger.warning("Upcoming matches query failed: %s", exc)
+        upcoming_rows = []
+
+    upcoming = [_row_to_match(r, is_completed=False) for r in upcoming_rows]
+
+    # Always include recent results across all leagues so the section is never
+    # empty (real World Cup data starts June 11; otherwise we show qualifier
+    # results, club games, etc.)
+    recent_sql = (
+        "SELECT fixture_id, home_team_name, away_team_name, "
+        "home_score, away_score, status, "
+        "CAST(match_date AS STRING) AS match_date, league_id "
+        "FROM `" + table + "` "
+        "WHERE is_completed = TRUE" + league_clause + " "
+        "ORDER BY match_date DESC LIMIT 20"
+    )
+
+    try:
+        recent_rows = bq.run_query(recent_sql)
+    except Exception as exc:
+        logger.warning("Recent matches query failed: %s", exc)
+        recent_rows = []
+
+    recent = [_row_to_match(r, is_completed=True) for r in recent_rows]
+
+    if not upcoming and not recent:
+        return {"live": [], "upcoming": [], "recent": [], "message": "World Cup 2026 begins June 11"}
+
+    return {"live": [], "upcoming": upcoming, "recent": recent}
+
+
+@app.get("/matches/score/{fixture_id}")
+def matches_score(fixture_id: str) -> dict:
+    """Return detailed match info for a single fixture — used by clickable cards.
+
+    Pulls from silver_fixtures (basic match data) and joins with
+    gold_match_results when the match is completed (for winner + total_goals).
+    """
+    table = config.table("silver_fixtures")
+    sql = (
+        "SELECT fixture_id, home_team_name, away_team_name, "
+        "home_score, away_score, status, "
+        "CAST(match_date AS STRING) AS match_date, league_id, is_completed "
+        "FROM `" + table + "` "
+        "WHERE fixture_id = '" + _esc(fixture_id) + "' LIMIT 1"
     )
     try:
         rows = bq.run_query(sql)
     except Exception as exc:
-        logger.warning("Upcoming matches query failed: %s", exc)
+        logger.warning("Match score query failed: %s", exc)
         rows = []
     if not rows:
-        return {"live": [], "upcoming": [], "message": "World Cup 2026 begins June 11"}
-    upcoming = [
-        {
-            "home_team": r.get("home_team_name", ""),
-            "away_team": r.get("away_team_name", ""),
-            "home_score": r.get("home_score"),
-            "away_score": r.get("away_score"),
-            "status": r.get("status", ""),
-            "match_date": r.get("match_date"),
-            "match_time": None,
-        }
-        for r in rows
-    ]
-    return {"live": [], "upcoming": upcoming}
+        raise HTTPException(status_code=404, detail=f"Fixture '{fixture_id}' not found")
+    row = rows[0]
+    league_id = str(row.get("league_id", ""))
+    is_completed = bool(row.get("is_completed"))
+    result: dict = {
+        "fixture_id": row.get("fixture_id"),
+        "home_team": row.get("home_team_name", ""),
+        "away_team": row.get("away_team_name", ""),
+        "home_score": row.get("home_score"),
+        "away_score": row.get("away_score"),
+        "status": row.get("status", "") or ("FT" if is_completed else "NS"),
+        "match_date": row.get("match_date"),
+        "league_id": league_id,
+        "league_name": _LEAGUE_NAME_BY_ID.get(league_id, f"League {league_id}"),
+        "is_completed": is_completed,
+        "winner": None,
+        "total_goals": None,
+        "goal_difference": None,
+    }
+    if is_completed:
+        gold = config.table("gold_match_results")
+        try:
+            gsql = (
+                "SELECT winner, total_goals, goal_difference "
+                "FROM `" + gold + "` "
+                "WHERE fixture_id = '" + _esc(fixture_id) + "' LIMIT 1"
+            )
+            grows = bq.run_query(gsql)
+            if grows:
+                gr = grows[0]
+                result["winner"] = gr.get("winner")
+                result["total_goals"] = gr.get("total_goals")
+                result["goal_difference"] = gr.get("goal_difference")
+        except Exception as exc:
+            logger.warning("gold_match_results lookup failed: %s", exc)
+    return result
 
 
 @app.post("/report/pdf/{player_name}")
