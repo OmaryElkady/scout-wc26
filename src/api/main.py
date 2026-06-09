@@ -316,14 +316,21 @@ async def adk_query(request: QueryRequest) -> QueryResponse:
 
 @app.get("/charts/squad-age-profile")
 def chart_squad_age_profile(league_id: Optional[int] = None) -> dict:
+    # When no league_id is passed, default to the active league but fall back
+    # to all leagues if the active league has no data yet (e.g. fresh deploy).
+    explicit = league_id is not None
     lid = str(league_id) if league_id else str(_active_league["id"])
-    sql = (
+    base_sql = (
         "SELECT team_name, ROUND(AVG(age), 1) as avg_age "
         "FROM `" + config.table("gold_player_stats") + "` "
-        "WHERE age IS NOT NULL AND league_id = '" + _esc(lid) + "' "
+        "WHERE age IS NOT NULL"
+    )
+    rows = bq.run_query(
+        base_sql + " AND league_id = '" + _esc(lid) + "' "
         "GROUP BY team_name ORDER BY avg_age ASC LIMIT 10"
     )
-    rows = bq.run_query(sql)
+    if not rows and not explicit:
+        rows = bq.run_query(base_sql + " GROUP BY team_name ORDER BY avg_age ASC LIMIT 10")
     return {
         "labels": [r["team_name"] for r in rows],
         "data": [float(r["avg_age"]) for r in rows],
@@ -333,14 +340,18 @@ def chart_squad_age_profile(league_id: Optional[int] = None) -> dict:
 
 @app.get("/charts/top-teams")
 def chart_top_teams(league_id: Optional[int] = None) -> dict:
+    explicit = league_id is not None
     lid = str(league_id) if league_id else str(_active_league["id"])
-    sql = (
-        "SELECT team_name, points "
-        "FROM `" + config.table("gold_team_summary") + "` "
+    table = config.table("gold_team_summary")
+    rows = bq.run_query(
+        "SELECT team_name, points FROM `" + table + "` "
         "WHERE league_id = '" + _esc(lid) + "' "
         "ORDER BY points DESC LIMIT 15"
     )
-    rows = bq.run_query(sql)
+    if not rows and not explicit:
+        rows = bq.run_query(
+            "SELECT team_name, points FROM `" + table + "` ORDER BY points DESC LIMIT 15"
+        )
     return {
         "labels": [r["team_name"] for r in rows],
         "data": [r["points"] for r in rows],
@@ -351,15 +362,16 @@ def chart_top_teams(league_id: Optional[int] = None) -> dict:
 @app.get("/charts/team-depth/{team_name}")
 def chart_team_depth(team_name: str, league_id: Optional[int] = None) -> dict:
     _POS_ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3, "UNKNOWN": 4}
+    explicit = league_id is not None
     lid = str(league_id) if league_id else str(_active_league["id"])
-    sql = (
-        "SELECT position, COUNT(*) as cnt "
-        "FROM `" + config.table("gold_player_stats") + "` "
-        "WHERE LOWER(team_name) LIKE '%" + _esc(team_name.lower()) + "%' "
-        "AND league_id = '" + _esc(lid) + "' "
-        "GROUP BY position"
+    table = config.table("gold_player_stats")
+    base = (
+        "SELECT position, COUNT(*) as cnt FROM `" + table + "` "
+        "WHERE LOWER(team_name) LIKE '%" + _esc(team_name.lower()) + "%'"
     )
-    rows = bq.run_query(sql)
+    rows = bq.run_query(base + " AND league_id = '" + _esc(lid) + "' GROUP BY position")
+    if not rows and not explicit:
+        rows = bq.run_query(base + " GROUP BY position")
     rows.sort(key=lambda r: _POS_ORDER.get(r.get("position", ""), 99))
     return {
         "labels": [r["position"] for r in rows],
