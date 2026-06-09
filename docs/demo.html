@@ -552,24 +552,59 @@
     .matches-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
     .match-card {
       flex-shrink: 0;
-      width: 200px;
+      width: 220px;
       background: var(--bg);
       border: 1px solid var(--border);
       border-radius: 8px;
       padding: 12px 14px;
-      transition: border-color .15s;
+      transition: border-color .15s, transform .15s, box-shadow .15s;
+      cursor: pointer;
+    }
+    .match-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(66, 133, 244, 0.18);
     }
     .match-card.live     { border-color: var(--green); }
     .match-card.upcoming { border-color: var(--primary); }
+    .match-card.recent   { border-color: var(--border); }
     .match-comp {
       font-size: 10px;
       font-weight: 700;
       letter-spacing: 0.5px;
       text-transform: uppercase;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      align-items: center;
     }
     .match-comp.live     { color: var(--red); }
     .match-comp.upcoming { color: var(--primary); }
+    .match-comp.recent   { color: var(--muted); }
+    .match-league {
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 9px;
+      max-width: 110px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .match-details {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--muted);
+      display: none;
+    }
+    .match-details.visible { display: block; }
+    .match-details .row {
+      display: flex;
+      justify-content: space-between;
+      margin: 2px 0;
+    }
+    .match-details .winner { color: var(--green); font-weight: 600; }
     .match-teams {
       font-size: 13px;
       color: #fff;
@@ -652,6 +687,14 @@
       to   { opacity: 1; transform: translateY(0); }
     }
     .chart-fade { animation: fadeInChart .45s ease forwards; }
+
+    /* ── Scroll-target flash (agent → section navigation) ── */
+    @keyframes flashTarget {
+      0%   { box-shadow: 0 0 0 0 rgba(66, 133, 244, 0); }
+      30%  { box-shadow: 0 0 0 4px rgba(66, 133, 244, 0.45); }
+      100% { box-shadow: 0 0 0 0 rgba(66, 133, 244, 0); }
+    }
+    .flash-target { animation: flashTarget 1.2s ease-out; }
 
     /* ── Top Performers Leaderboard ── */
     .lb-tabs {
@@ -1421,6 +1464,15 @@
 
   // ── Page Actions ───────────────────────────────────────────────────────────
 
+  function _scrollAndFlash(el) {
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.classList.remove('flash-target');
+    void el.offsetWidth; // force reflow so the animation restarts
+    el.classList.add('flash-target');
+    setTimeout(() => el.classList.remove('flash-target'), 1400);
+  }
+
   async function _executePageActions(actions) {
     for (const action of actions) {
       switch (action.action) {
@@ -1467,13 +1519,11 @@
             'top-performers': 'section-top-performers',
             leaderboard:      'section-top-performers',
           };
-          const el = document.getElementById(idMap[action.section] || action.section);
-          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          _scrollAndFlash(document.getElementById(idMap[action.section] || action.section));
           break;
         }
         case 'fill_report_input': {
-          const el = document.getElementById('section-pdf-report');
-          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          _scrollAndFlash(document.getElementById('section-pdf-report'));
           await new Promise(r => setTimeout(r, 600));
           const input = document.getElementById('pdf-input');
           if (input && action.player_name) {
@@ -1493,13 +1543,11 @@
           let targetBtn = null;
           btns.forEach(b => { if (b.textContent.toLowerCase().includes(stat.toLowerCase())) targetBtn = b; });
           if (targetBtn) switchLbTab(stat, targetBtn);
-          const lbEl = document.getElementById('section-top-performers');
-          if (lbEl) lbEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          _scrollAndFlash(document.getElementById('section-top-performers'));
           break;
         }
         case 'fill_chart_input': {
-          const el = document.getElementById('section-analytics');
-          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          _scrollAndFlash(document.getElementById('section-analytics'));
           await new Promise(r => setTimeout(r, 600));
           const input = document.getElementById('ai-chart-input');
           if (input && action.text) {
@@ -1525,7 +1573,7 @@
           if (playerInput) playerInput.value = pName;
           const ok = await fetchReport();
           if (ok) {
-            document.getElementById('section-reports')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            _scrollAndFlash(document.getElementById('section-reports'));
             if (box) box.innerHTML = `📋 Scouting report generated for <strong>${_escHtml(pName)}</strong> — <a href="#section-reports" style="color:#3b82f6">view below ↓</a>`;
           } else if (box && !box.querySelector('[style*="color:var(--red)"]')) {
             box.innerHTML = `<div style="color:var(--red);font-size:14px">⚠ Could not generate report for "${_escHtml(pName)}"</div>`;
@@ -2201,35 +2249,33 @@
     } catch { return (dateStr + (timeStr ? ' · ' + timeStr : '')).trim(); }
   }
 
-  function _renderMatches(live, upcoming) {
+  function _matchCard(m, kind) {
+    const league = m.league_name ? `<span class="match-league">${_escHtml(m.league_name)}</span>` : '';
+    const labels = { live: '🔴 LIVE', upcoming: '📅 UPCOMING', recent: '✓ FT' };
+    const fid = m.fixture_id != null ? String(m.fixture_id) : '';
+    const teams = (m.home_score != null && m.away_score != null)
+      ? `${_escHtml(m.home_team)} <span class="score">${m.home_score} – ${m.away_score}</span> ${_escHtml(m.away_team)}`
+      : `${_escHtml(m.home_team)} vs ${_escHtml(m.away_team)}`;
+    const when = kind === 'live'
+      ? `<div class="match-when live-indicator">${_escHtml(m.status || 'LIVE')}</div>`
+      : `<div class="match-when">${_escHtml(_fmtMatchDate(m.match_date, m.match_time) || (kind === 'recent' ? 'Result' : 'TBC'))}</div>`;
+    return (
+      `<div class="match-card ${kind}" data-fixture-id="${_escHtml(fid)}" onclick="toggleMatchDetails(this)">` +
+        `<div class="match-comp ${kind}"><span>${labels[kind]}</span>${league}</div>` +
+        `<div class="match-teams">${teams}</div>` +
+        when +
+        `<div class="match-details"></div>` +
+      `</div>`
+    );
+  }
+
+  function _renderMatches(live, upcoming, recent) {
     const row = document.getElementById('matches-row');
     if (!row) return;
-
     const cards = [];
-
-    for (const m of live) {
-      const score = (m.home_score != null && m.away_score != null)
-        ? `<span class="score">${m.home_score} – ${m.away_score}</span>`
-        : 'vs';
-      cards.push(
-        `<div class="match-card live">` +
-          `<div class="match-comp live">🔴 LIVE</div>` +
-          `<div class="match-teams">${m.home_team} ${score} ${m.away_team}</div>` +
-          `<div class="match-when live-indicator">${m.status || 'LIVE'}</div>` +
-        `</div>`
-      );
-    }
-
-    for (const m of upcoming) {
-      const when = _fmtMatchDate(m.match_date, m.match_time);
-      cards.push(
-        `<div class="match-card upcoming">` +
-          `<div class="match-comp upcoming">📅 UPCOMING</div>` +
-          `<div class="match-teams">${m.home_team} vs ${m.away_team}</div>` +
-          `<div class="match-when">${when || 'TBC'}</div>` +
-        `</div>`
-      );
-    }
+    for (const m of live) cards.push(_matchCard(m, 'live'));
+    for (const m of upcoming) cards.push(_matchCard(m, 'upcoming'));
+    for (const m of recent) cards.push(_matchCard(m, 'recent'));
 
     if (cards.length === 0) {
       row.innerHTML =
@@ -2238,17 +2284,49 @@
         `</div>`;
       return;
     }
-
     row.innerHTML = cards.join('');
+  }
+
+  async function toggleMatchDetails(cardEl) {
+    const details = cardEl.querySelector('.match-details');
+    if (!details) return;
+    if (details.classList.contains('visible')) {
+      details.classList.remove('visible');
+      return;
+    }
+    const fid = cardEl.dataset.fixtureId;
+    if (!fid) return;
+    if (!details.dataset.loaded) {
+      details.innerHTML = `<div class="row" style="color:var(--muted)">Loading…</div>`;
+      details.classList.add('visible');
+      try {
+        const res = await fetch(`${API}/matches/score/${encodeURIComponent(fid)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json();
+        const rows = [];
+        if (d.match_date) rows.push(`<div class="row"><span>Date</span><span>${_escHtml(d.match_date)}</span></div>`);
+        if (d.status)     rows.push(`<div class="row"><span>Status</span><span>${_escHtml(d.status)}</span></div>`);
+        if (d.winner)     rows.push(`<div class="row"><span>Winner</span><span class="winner">${_escHtml(d.winner)}</span></div>`);
+        if (d.total_goals != null) rows.push(`<div class="row"><span>Total goals</span><span>${d.total_goals}</span></div>`);
+        if (d.goal_difference != null) rows.push(`<div class="row"><span>Goal diff</span><span>${d.goal_difference}</span></div>`);
+        details.innerHTML = rows.join('') || `<div class="row" style="color:var(--muted)">No extra info</div>`;
+        details.dataset.loaded = '1';
+      } catch {
+        details.innerHTML = `<div class="row" style="color:var(--red)">Failed to load</div>`;
+      }
+    } else {
+      details.classList.add('visible');
+    }
   }
 
   async function loadMatches() {
     document.getElementById('matches-spinner')?.classList.add('visible');
     try {
-      const res = await fetch(`${API}/matches/live-upcoming?league_id=${_activeLeagueId}`);
+      // No league_id param → backend returns matches across all verified leagues
+      const res = await fetch(`${API}/matches/live-upcoming`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const { live, upcoming } = await res.json();
-      _renderMatches(live || [], upcoming || []);
+      const { live, upcoming, recent } = await res.json();
+      _renderMatches(live || [], upcoming || [], recent || []);
     } catch {
       const row = document.getElementById('matches-row');
       if (row) {
