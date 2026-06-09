@@ -2045,17 +2045,20 @@
   // ── Chart 2: Top 15 Teams by Points ───────────────────────────────────────
 
   async function loadCharts() {
-    const lid = _activeLeagueId;
     // Clear any previous error messages so they don't stack on retry.
     ['age-wrap', 'teams-wrap'].forEach(id => {
       const wrap = document.getElementById(id);
       if (wrap) wrap.querySelectorAll('.chart-load-error').forEach(el => el.remove());
     });
+    // No league_id param: backend uses _active_league as the default, and falls
+    // back to all-leagues data when the active league has no rows (e.g. cold
+    // start with UEFA WC Qual selected before any data exists for it). Passing
+    // an explicit league_id disables that fallback.
     _loadStaticChart("chart-squad-age", "chart-age-title",
-      `/charts/squad-age-profile?league_id=${lid}`, "bar", { indexAxis: "y", color: C.blue }, "age-wrap");
+      `/charts/squad-age-profile`, "bar", { indexAxis: "y", color: C.blue }, "age-wrap");
 
     _loadStaticChart("chart-teams", "chart-teams-title",
-      `/charts/top-teams?league_id=${lid}`, "bar", { color: C.green }, "teams-wrap");
+      `/charts/top-teams`, "bar", { color: C.green }, "teams-wrap");
   }
 
   // ── Chart 3: Position Depth (interactive) ─────────────────────────────────
@@ -2075,7 +2078,8 @@
     _ensureCanvas("depth-wrap", "chart-depth");
     if (card) card.classList.add("loading");
     try {
-      const res = await fetch(`${API}/charts/team-depth/${encodeURIComponent(teamName)}?league_id=${_activeLeagueId}`);
+      // Omit league_id — let backend use active league + fallback (see loadCharts)
+      const res = await fetch(`${API}/charts/team-depth/${encodeURIComponent(teamName)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const payload = await res.json();
       _renderChart("chart-depth", { ...payload, chart_type: "bar" }, { color: C.yellow });

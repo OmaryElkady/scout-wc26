@@ -276,12 +276,44 @@ async def legacy_progress_redirect():
     return RedirectResponse(url="/progress/current", status_code=307)
 
 
+_REFRESH_INTENT_PATTERN = re.compile(
+    r"\b(refresh|re[- ]?sync|sync\s+(?:the\s+)?(?:data|scout(?:ing)?))\b",
+    re.IGNORECASE,
+)
+
+
+def _is_refresh_intent(question: str) -> bool:
+    """Detect 'refresh / sync scouting data' phrasing.
+
+    Refresh is a 2–3 minute Fivetran+pipeline operation. Running it inside the
+    /query handler causes Cloud Run to drop the connection with 503. Intercept
+    the request here, dispatch the same background thread that POST /refresh
+    uses, and return a canned answer immediately.
+    """
+    if not question:
+        return False
+    if "switch" in question.lower():
+        return False
+    return bool(_REFRESH_INTENT_PATTERN.search(question))
+
+
 @app.post("/query", response_model=QueryResponse)
 def query(request: QueryRequest) -> QueryResponse:
     from src.utils.progress import reset_progress
 
     logger.info("POST /query: question=%r", request.question)
     reset_progress()
+
+    if _is_refresh_intent(request.question):
+        logger.info("POST /query: refresh intent detected — dispatching background thread")
+        threading.Thread(target=agent_tools.refresh_scouting_data, daemon=True).start()
+        answer = (
+            "🔄 Scouting data refresh started — watch the progress panel below. "
+            "Teams, charts, and matches will reload automatically when the sync completes."
+        )
+        page_actions = _infer_page_actions(request.question, answer)
+        return QueryResponse(answer=answer, question=request.question, page_actions=page_actions)
+
     answer = scout_agent.run_query(request.question)
     page_actions = _infer_page_actions(request.question, answer)
     return QueryResponse(answer=answer, question=request.question, page_actions=page_actions)
