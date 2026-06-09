@@ -230,7 +230,10 @@ def test_get_top_players_by_position_sql_has_order_by_age_asc():
         mock_bq.run_query.return_value = []
         get_top_players_by_position("Midfielder")
         sql = mock_bq.run_query.call_args[0][0]
-        assert "ORDER BY age ASC" in sql
+        # Ranks by active league first then age ASC so cross-league fallback
+        # works while preserving the youngest-first ordering.
+        assert "age ASC" in sql
+        assert "ORDER BY" in sql
 
 
 def test_get_top_players_by_position_applies_position_filter():
