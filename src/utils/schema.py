@@ -124,6 +124,7 @@ _GOLD_SCHEMAS: dict[str, list[bigquery.SchemaField]] = {
     "gold_team_summary": [
         bigquery.SchemaField("team_id",         "STRING"),
         bigquery.SchemaField("team_name",       "STRING"),
+        bigquery.SchemaField("league_id",       "STRING",  mode="NULLABLE"),
         bigquery.SchemaField("matches_played",  "INTEGER"),
         bigquery.SchemaField("wins",            "INTEGER"),
         bigquery.SchemaField("draws",           "INTEGER"),
