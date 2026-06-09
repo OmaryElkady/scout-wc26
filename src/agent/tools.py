@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Any, Optional
 
 from src.utils.bq_client import bq
@@ -8,6 +9,44 @@ from src.utils.progress import emit_progress
 logger = logging.getLogger(__name__)
 
 _MAX_RESULTS = 20
+
+# Prefix verbs that frequently appear when users phrase a request as
+# "Generate Bellingham's scouting report" or "Show me Mbappe". Strip these
+# before searching the database so the lookup matches on the actual name.
+_NAME_PREFIX_RE = re.compile(
+    r"^(?:please\s+)?"
+    r"(?:generate|create|show(?:\s+me)?|make|build|download|get(?:\s+me)?|"
+    r"view|display|produce|give\s+me|fetch|find|pull|tell\s+me\s+about|"
+    r"about|for|on)\s+",
+    re.IGNORECASE,
+)
+_NAME_SUFFIX_RE = re.compile(
+    r"['’]?s?\s*(?:scouting\s+)?(?:report|profile|details?|info(?:rmation)?).*$",
+    re.IGNORECASE,
+)
+_TRAILING_POSSESSIVE_RE = re.compile(r"['’]s?\s*$")
+
+
+def _clean_player_name(name: str) -> str:
+    """Strip leading action verbs and trailing report/profile wording.
+
+    Examples:
+        "Generate Bellingham's scouting report" -> "Bellingham"
+        "show me Mbappe" -> "Mbappe"
+        "Vinicius Jr profile" -> "Vinicius Jr"
+    """
+    if not name:
+        return ""
+    cleaned = name.strip()
+    # Iteratively strip leading verbs (handles "show me about Mbappe")
+    for _ in range(4):
+        new = _NAME_PREFIX_RE.sub("", cleaned)
+        if new == cleaned:
+            break
+        cleaned = new
+    cleaned = _NAME_SUFFIX_RE.sub("", cleaned).strip()
+    cleaned = _TRAILING_POSSESSIVE_RE.sub("", cleaned).strip()
+    return cleaned
 
 # Silver transform normalises positions to these four codes.
 _POSITION_MAP: dict[str, str] = {
@@ -91,21 +130,22 @@ def query_players(
         Returns an empty list if no players match the filters.
     """
     table = config.table("gold_player_stats")
-    conditions = ["league_id = '" + _esc(_get_active_league_id()) + "'"]
+    league_cond = "league_id = '" + _esc(_get_active_league_id()) + "'"
+    other_conds: list[str] = []
 
     if position:
-        conditions.append("position = '" + _esc(_normalize_position(position)) + "'")
+        other_conds.append("position = '" + _esc(_normalize_position(position)) + "'")
     if nationality:
-        conditions.append("LOWER(nationality) LIKE '%" + _esc(nationality.lower()) + "%'")
+        other_conds.append("LOWER(nationality) LIKE '%" + _esc(nationality.lower()) + "%'")
     if team_name:
-        conditions.append("LOWER(team_name) LIKE '%" + _esc(team_name.lower()) + "%'")
+        other_conds.append("LOWER(team_name) LIKE '%" + _esc(team_name.lower()) + "%'")
     if min_age is not None:
-        conditions.append("age >= " + str(int(min_age)))
+        other_conds.append("age >= " + str(int(min_age)))
     if max_age is not None:
-        conditions.append("age <= " + str(int(max_age)))
+        other_conds.append("age <= " + str(int(max_age)))
 
-    where = "WHERE " + " AND ".join(conditions)
     order_by = " ORDER BY team_name, name"
+    where = "WHERE " + " AND ".join([league_cond] + other_conds)
     sql = "SELECT * FROM `" + table + "` " + where + order_by + " LIMIT " + str(_MAX_RESULTS)
 
     logger.info(
@@ -117,6 +157,18 @@ def query_players(
         max_age,
     )
     rows = bq.run_query(sql)
+    # Fall back to all leagues when the active league has no matches for the
+    # requested filters — otherwise the agent answers "no players found" while
+    # the same player exists in another league.
+    if not rows and other_conds:
+        where_no_league = "WHERE " + " AND ".join(other_conds)
+        sql_fb = (
+            "SELECT * FROM `" + table + "` " + where_no_league + order_by +
+            " LIMIT " + str(_MAX_RESULTS)
+        )
+        rows = bq.run_query(sql_fb)
+        if rows:
+            logger.info("query_players: active-league empty, returned %d cross-league rows", len(rows))
     logger.info("query_players: returned %d rows", len(rows))
     return rows
 
@@ -204,19 +256,30 @@ def get_player_detail(
         Returns an empty dict if the player is not found.
     """
     table = config.table("gold_player_stats")
-    conditions = ["league_id = '" + _esc(_get_active_league_id()) + "'"]
+    active_lid = _esc(_get_active_league_id())
+    conditions: list[str] = []
 
     if player_id is not None:
         conditions.append("player_id = '" + _esc(str(player_id)) + "'")
     if player_name:
-        conditions.append("LOWER(name) LIKE '%" + _esc(player_name.lower()) + "%'")
+        cleaned = _clean_player_name(player_name)
+        if cleaned:
+            conditions.append("LOWER(name) LIKE '%" + _esc(cleaned.lower()) + "%'")
 
-    if len(conditions) == 1:
+    if not conditions:
         logger.warning("get_player_detail called with no filters — returning empty")
         return {}
 
     where = "WHERE " + " AND ".join(conditions)
-    sql = "SELECT * FROM `" + table + "` " + where + " LIMIT 1"
+    # Search every league so the lookup never fails on cross-league players
+    # (e.g. Bellingham is in Premier League and World Cup squads). Rank rows
+    # so the active league wins first; otherwise the most-recent league wins.
+    sql = (
+        "SELECT * EXCEPT(_lr) FROM ("
+        "  SELECT *, CASE WHEN league_id = '" + active_lid + "' THEN 0 ELSE 1 END AS _lr"
+        "  FROM `" + table + "` " + where +
+        ") ORDER BY _lr ASC LIMIT 1"
+    )
 
     logger.info("get_player_detail: player_name=%s player_id=%s", player_name, player_id)
     rows = bq.run_query(sql)
@@ -254,15 +317,15 @@ def get_top_players_by_position(
     """
     table = config.table("gold_player_stats")
     safe_limit = str(max(1, min(int(limit), 100)))
+    active_lid = _esc(_get_active_league_id())
+    pos = _esc(_normalize_position(position))
+    # Rank rows so the active league appears first; fall back to other leagues
+    # when the active league has no data for this position.
     sql = (
-        "SELECT * FROM `"
-        + table
-        + "` WHERE league_id = '"
-        + _esc(_get_active_league_id())
-        + "' AND position = '"
-        + _esc(_normalize_position(position))
-        + "' ORDER BY age ASC LIMIT "
-        + safe_limit
+        "SELECT * EXCEPT(_lr) FROM ("
+        "  SELECT *, CASE WHEN league_id = '" + active_lid + "' THEN 0 ELSE 1 END AS _lr"
+        "  FROM `" + table + "` WHERE position = '" + pos + "'"
+        ") ORDER BY _lr ASC, age ASC LIMIT " + safe_limit
     )
 
     logger.info("get_top_players_by_position: position=%s limit=%s", position, limit)
