@@ -749,7 +749,14 @@ def report_pdf(player_name: str) -> Response:
     except Exception:
         pass
 
-    scouting_para = scout_agent.run_query(
+    # Direct one-shot Gemini call (no tools, no agent loop) — keeps PDF generation
+    # under ~10s. Using the full scout_agent.run_query() here ran the whole 5-round
+    # tool loop and took 30–60s for a report that needs no DB lookups (we already
+    # have the data in hand).
+    import google.genai as genai
+    from google.genai import types as genai_types
+
+    _scout_prompt = (
         f"You are a UEFA-licensed football scout. Write a professional 4-5 sentence scouting report for "
         f"{_pname}, {_age} years old, {_position} for {team_name} ({_nationality}).\n\n"
         f"Cover these points in order:\n"
@@ -761,6 +768,13 @@ def report_pdf(player_name: str) -> Response:
         f"Write 4-5 sentences. Be specific and professional. "
         f"Do not refuse or hedge. Do not say you lack data."
     )
+    _genai_client = genai.Client(vertexai=True, project=config.PROJECT_ID, location=config.REGION)
+    _scout_resp = _genai_client.models.generate_content(
+        model=_MODEL,
+        contents=_scout_prompt,
+        config=genai_types.GenerateContentConfig(),
+    )
+    scouting_para = (_scout_resp.text or "").strip() or "No assessment available."
 
     buffer = BytesIO()
     PAGE_W = letter[0]
