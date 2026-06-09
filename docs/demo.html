@@ -1694,10 +1694,13 @@
         .map(s => `<span class="strength-tag">${_escHtml(s)}</span>`)
         .join("");
 
-      // Download button
+      // Download button — use addEventListener to capture displayName in a closure
+      // (inline onclick with JSON.stringify breaks when the name contains quotes)
       const actionsEl = document.getElementById("report-actions");
       if (actionsEl) {
-        actionsEl.innerHTML = `<button class="btn-download" onclick="downloadPDFReport(${JSON.stringify(displayName)})">⬇ Download Full PDF Report</button>`;
+        actionsEl.innerHTML = `<button class="btn-download" type="button">⬇ Download Full PDF Report</button>`;
+        const btn = actionsEl.querySelector('button');
+        if (btn) btn.addEventListener('click', () => downloadPDFReport(displayName));
       }
 
       document.getElementById("report-card").className = "report-card visible";
