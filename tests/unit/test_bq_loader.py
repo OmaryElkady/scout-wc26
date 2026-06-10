@@ -85,13 +85,25 @@ def test_write_bronze_players_all_rows_share_same_ingested_at():
 # ---------------------------------------------------------------------------
 
 
+def _capture_fixtures(rows, league_id=None):
+    """Call write_bronze_fixtures with optional league_id; return (table, rows)."""
+    with patch("src.ingestion.bq_loader.bq") as mock_bq:
+        if league_id is None:
+            write_bronze_fixtures(rows)
+        else:
+            write_bronze_fixtures(rows, league_id=league_id)
+        assert mock_bq.insert_rows.called
+        _table, inserted = mock_bq.insert_rows.call_args[0]
+        return _table, inserted
+
+
 def test_write_bronze_fixtures_targets_correct_table():
-    table, _ = _capture_insert(write_bronze_fixtures, [{"fixture_id": "10"}])
+    table, _ = _capture_fixtures([{"fixture_id": "10"}])
     assert table == "bronze_fixtures"
 
 
 def test_write_bronze_fixtures_adds_metadata():
-    _, rows = _capture_insert(write_bronze_fixtures, [{"fixture_id": "10"}])
+    _, rows = _capture_fixtures([{"fixture_id": "10"}])
     assert "ingested_at" in rows[0]
     assert rows[0]["source"] == "free-api-live-football-data"
 
@@ -100,6 +112,57 @@ def test_write_bronze_fixtures_skips_on_empty_input():
     with patch("src.ingestion.bq_loader.bq") as mock_bq:
         write_bronze_fixtures([])
         mock_bq.insert_rows.assert_not_called()
+
+
+def test_write_bronze_fixtures_uses_explicit_league_id():
+    """Caller-supplied league_id wins over module-level _WORLD_CUP_LEAGUE_ID."""
+    _, rows = _capture_fixtures([{"id": "fx-1", "home": {"id": 5}, "away": {"id": 6}}], league_id=42)
+    assert rows[0]["league_id"] == "42"
+
+
+def test_write_bronze_fixtures_does_not_re_tag_with_active_league():
+    """Regression: switching the active league must NOT re-tag fixtures from
+    a previous league when the caller passes an explicit league_id.
+
+    Reproduces the PSG-vs-Arsenal-shows-WORLD-CUP-2026 bug: if you fetched
+    UCL fixtures (league 42) and the active league is later swapped to 77,
+    re-writing those fixtures with league_id=42 (their real origin) must
+    keep them tagged 42 — not pick up the new active league.
+    """
+    import src.ingestion.bq_loader as loader_mod
+
+    # Simulate: active league has been swapped to World Cup 2026 (77),
+    # but we're writing UCL fixtures we fetched earlier under league 42.
+    with patch.object(loader_mod, "_WORLD_CUP_LEAGUE_ID", 77):
+        _, rows = _capture_fixtures(
+            [
+                {"id": "fx-psg-ars", "home": {"id": 85, "name": "PSG"},
+                 "away": {"id": 42, "name": "Arsenal"}}
+            ],
+            league_id=42,
+        )
+    assert rows[0]["league_id"] == "42", (
+        "Fixture must keep its real league_id (42=UCL), not pick up the "
+        "current active league (77=WC2026)."
+    )
+
+
+def test_write_bronze_fixtures_falls_back_to_active_league_when_unspecified():
+    """Backwards-compat: callers that don't pass league_id get the module global."""
+    import src.ingestion.bq_loader as loader_mod
+
+    with patch.object(loader_mod, "_WORLD_CUP_LEAGUE_ID", 10195):
+        _, rows = _capture_fixtures([{"id": "fx-x", "home": {}, "away": {}}])
+    assert rows[0]["league_id"] == "10195"
+
+
+def test_write_bronze_fixtures_tags_all_rows_with_same_league_id():
+    """All fixtures in a single batch share the supplied league_id."""
+    _, rows = _capture_fixtures(
+        [{"id": "fx-a"}, {"id": "fx-b"}, {"id": "fx-c"}],
+        league_id=140,
+    )
+    assert [r["league_id"] for r in rows] == ["140", "140", "140"]
 
 
 # ---------------------------------------------------------------------------
