@@ -136,6 +136,9 @@ def test_fixtures_calls_api_with_leagueid_param():
     with patch("src.utils.football_api.bq") as mock_bq, \
          patch("src.utils.football_api.requests.get", return_value=_mock_response(200, api_payload)) as mock_get:
         mock_bq.table_exists.return_value = False
+        # Cache check now goes through run_query with a league_id WHERE clause;
+        # return [] explicitly so the API path is exercised.
+        mock_bq.run_query.return_value = []
 
         result = client.get_world_cup_fixtures()
 
@@ -150,10 +153,30 @@ def test_fixtures_returns_empty_list_on_missing_matches_key():
     with patch("src.utils.football_api.bq") as mock_bq, \
          patch("src.utils.football_api.requests.get", return_value=_mock_response(200, {})):
         mock_bq.table_exists.return_value = False
+        mock_bq.run_query.return_value = []
 
         result = client.get_world_cup_fixtures()
 
     assert result == []
+
+
+def test_fixtures_cache_query_filters_by_active_league_id():
+    """Regression: the Bronze cache read must be scoped to the active league
+    so a previous league's fixtures cannot leak into the result and be
+    re-tagged on the next write."""
+    client = _make_client()
+    with patch("src.utils.football_api.bq") as mock_bq, \
+         patch("src.utils.football_api.requests.get") as mock_requests:
+        mock_bq.run_query.return_value = [{"raw_json": '{"matchId": "55"}'}]
+
+        result = client.get_world_cup_fixtures()
+
+    assert result == [{"matchId": "55"}]
+    mock_requests.assert_not_called()
+    # The SQL passed to bq.run_query must filter by the active league id —
+    # otherwise stale fixtures from prior leagues would be returned.
+    sql_arg = mock_bq.run_query.call_args[0][0]
+    assert f"WHERE league_id = '{_WORLD_CUP_LEAGUE_ID}'" in sql_arg
 
 
 # ---------------------------------------------------------------------------
