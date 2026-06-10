@@ -36,11 +36,17 @@ class ReportResponse(BaseModel):
 
 class TeamListResponse(BaseModel):
     teams: list[dict[str, Any]]
+    status: str | None = None
+    message: str | None = None
+    kickoff: str | None = None
 
 
 class PlayerListResponse(BaseModel):
     players: list[dict[str, Any]]
     count: int
+    status: str | None = None
+    message: str | None = None
+    kickoff: str | None = None
 
 
 class SwitchLeagueRequest(BaseModel):
