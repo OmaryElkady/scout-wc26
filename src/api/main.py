@@ -1022,6 +1022,14 @@ def report(player_name: str) -> ReportResponse:
     )
 
 
+_WC2026_LEAGUE_ID = 77
+_WC2026_KICKOFF = "2026-06-11"
+_WC2026_COMING_SOON_MSG = (
+    "FIFA World Cup 2026 begins June 11, 2026. Squad and match data will "
+    "appear here automatically once the tournament begins."
+)
+
+
 @app.get("/teams", response_model=TeamListResponse)
 def teams(league_id: Optional[int] = None) -> TeamListResponse:
     logger.info("GET /teams: league_id=%s", league_id)
@@ -1035,6 +1043,16 @@ def teams(league_id: Optional[int] = None) -> TeamListResponse:
                 return TeamListResponse(teams=rows)
         except Exception:
             pass
+        # No rows for the requested league. If it's WC2026, signal coming_soon
+        # so the frontend can render the qualified-nations placeholder grid
+        # instead of falling back to other leagues' data.
+        if int(lid) == _WC2026_LEAGUE_ID:
+            return TeamListResponse(
+                teams=[],
+                status="coming_soon",
+                message=_WC2026_COMING_SOON_MSG,
+                kickoff=_WC2026_KICKOFF,
+            )
     sql = "SELECT * FROM `" + table + "` LIMIT 100"
     rows = bq.run_query(sql)
     return TeamListResponse(teams=rows)
@@ -1111,6 +1129,17 @@ def players(
     finally:
         _fa_mod._WORLD_CUP_LEAGUE_ID = original_lid
     rows = rows[:50]
+    # Coming-soon signal for WC2026 when no player data exists yet — same
+    # contract as /teams so the frontend can show a placeholder.
+    effective_lid = league_id or _active_league.get("id")
+    if not rows and effective_lid and int(effective_lid) == _WC2026_LEAGUE_ID:
+        return PlayerListResponse(
+            players=[],
+            count=0,
+            status="coming_soon",
+            message=_WC2026_COMING_SOON_MSG,
+            kickoff=_WC2026_KICKOFF,
+        )
     return PlayerListResponse(players=rows, count=len(rows))
 
 
