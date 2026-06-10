@@ -18,7 +18,7 @@ def _now() -> str:
 # Row mappers — raw API dict → Bronze schema fields
 # ---------------------------------------------------------------------------
 
-def _map_fixture(raw: dict, ts: str) -> dict:
+def _map_fixture(raw: dict, ts: str, league_id: int) -> dict:
     home = raw.get("home", {})
     away = raw.get("away", {})
     status = raw.get("status", {})
@@ -34,7 +34,7 @@ def _map_fixture(raw: dict, ts: str) -> dict:
         "status": status.get("reason", {}).get("short", ""),
         "home_score": int(home_score) if home_score is not None else None,
         "away_score": int(away_score) if away_score is not None else None,
-        "league_id": str(_WORLD_CUP_LEAGUE_ID),
+        "league_id": str(league_id),
         "season": _SEASON,
         "raw_json": json.dumps(raw),
         "ingested_at": ts,
@@ -88,13 +88,31 @@ def write_bronze_players(rows: list[dict]) -> None:
     bq.insert_rows("bronze_players", stamped)
 
 
-def write_bronze_fixtures(rows: list[dict]) -> None:
+def write_bronze_fixtures(rows: list[dict], league_id: int | None = None) -> None:
+    """Write fixture rows to bronze_fixtures, tagged with the explicit league_id.
+
+    league_id MUST be the league we actually fetched the fixtures for —
+    do NOT rely on the module-level _WORLD_CUP_LEAGUE_ID at write time,
+    because it may have been swapped between fetch and write (e.g. when
+    a stale cache returns fixtures from a previous league). Defaults to
+    _WORLD_CUP_LEAGUE_ID for backwards compatibility with callers that
+    have not been updated yet, but emits a warning when used.
+    """
     if not rows:
         logger.warning("write_bronze_fixtures called with no rows, skipping")
         return
+    if league_id is None:
+        logger.warning(
+            "write_bronze_fixtures called without league_id — falling back to "
+            "_WORLD_CUP_LEAGUE_ID=%d. This can mis-tag fixtures across leagues.",
+            _WORLD_CUP_LEAGUE_ID,
+        )
+        league_id = _WORLD_CUP_LEAGUE_ID
     ts = _now()
-    mapped = [_map_fixture(r, ts) for r in rows]
-    logger.info("Writing %d rows to bronze_fixtures", len(mapped))
+    mapped = [_map_fixture(r, ts, league_id) for r in rows]
+    logger.info(
+        "Writing %d rows to bronze_fixtures (league_id=%d)", len(mapped), league_id
+    )
     bq.insert_rows("bronze_fixtures", mapped)
 
 
