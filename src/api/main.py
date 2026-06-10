@@ -580,18 +580,46 @@ def _row_to_match(row: dict, *, is_completed: bool) -> dict:
     }
 
 
+# Football API status codes that mean a match is currently in play.
+# 1H/2H = halves, HT = half-time break, ET = extra time, BT = break time,
+# P = penalty shootout. "LIVE" is a generic fallback some feeds use.
+_LIVE_STATUSES = ("1H", "2H", "HT", "ET", "BT", "P", "LIVE")
+_MATCH_BUCKET_LIMIT = 5
+
+
 @app.get("/matches/live-upcoming")
 def matches_live_upcoming(league_id: Optional[int] = None) -> dict:
-    """Return live/upcoming fixtures across all verified leagues.
+    """Return matches split into three buckets: live, upcoming, recent.
 
-    Falls back to the most-recent completed matches (with scores) when no
-    upcoming fixtures exist — so the demo dashboard is always populated.
-    Pass ?league_id=X to restrict to a single league.
+    - live:     in-play matches (status 1H/2H/HT/ET/BT/P/LIVE) — no cap
+    - upcoming: not-yet-started fixtures (status NS, date >= today), max 5
+    - recent:   completed matches, deduplicated to 1 per league, max 5
+
+    Falls back to the most-recent completed matches when no upcoming fixtures
+    exist so the demo dashboard is always populated. Pass ?league_id=X to
+    restrict to a single league.
     """
     table = config.table("silver_fixtures")
     league_clause = ""
     if league_id is not None:
         league_clause = " AND league_id = '" + _esc(str(int(league_id))) + "'"
+
+    live_in = ", ".join("'" + s + "'" for s in _LIVE_STATUSES)
+    live_sql = (
+        "SELECT fixture_id, home_team_name, away_team_name, "
+        "home_score, away_score, status, "
+        "CAST(match_date AS STRING) AS match_date, league_id "
+        "FROM `" + table + "` "
+        "WHERE is_completed = FALSE AND UPPER(status) IN (" + live_in + ")"
+        + league_clause + " "
+        "ORDER BY match_date ASC LIMIT 20"
+    )
+    try:
+        live_rows = bq.run_query(live_sql)
+    except Exception as exc:
+        logger.warning("Live matches query failed: %s", exc)
+        live_rows = []
+    live = [_row_to_match(r, is_completed=False) for r in live_rows]
 
     upcoming_sql = (
         "SELECT fixture_id, home_team_name, away_team_name, "
@@ -599,42 +627,55 @@ def matches_live_upcoming(league_id: Optional[int] = None) -> dict:
         "CAST(match_date AS STRING) AS match_date, league_id "
         "FROM `" + table + "` "
         "WHERE match_date >= CURRENT_DATE() "
-        "AND is_completed = FALSE" + league_clause + " "
+        "AND is_completed = FALSE "
+        "AND UPPER(status) NOT IN (" + live_in + ")"
+        + league_clause + " "
         "ORDER BY match_date ASC LIMIT 20"
     )
-
     try:
         upcoming_rows = bq.run_query(upcoming_sql)
     except Exception as exc:
         logger.warning("Upcoming matches query failed: %s", exc)
         upcoming_rows = []
-
     upcoming = [_row_to_match(r, is_completed=False) for r in upcoming_rows]
+    upcoming = upcoming[:_MATCH_BUCKET_LIMIT]
 
-    # Always include recent results across all leagues so the section is never
-    # empty (real World Cup data starts June 11; otherwise we show qualifier
-    # results, club games, etc.)
+    # Pull a wider pool then dedupe to 1 per league so the panel doesn't get
+    # dominated by a single league's results.
     recent_sql = (
         "SELECT fixture_id, home_team_name, away_team_name, "
         "home_score, away_score, status, "
         "CAST(match_date AS STRING) AS match_date, league_id "
         "FROM `" + table + "` "
         "WHERE is_completed = TRUE" + league_clause + " "
-        "ORDER BY match_date DESC LIMIT 20"
+        "ORDER BY match_date DESC LIMIT 40"
     )
-
     try:
         recent_rows = bq.run_query(recent_sql)
     except Exception as exc:
         logger.warning("Recent matches query failed: %s", exc)
         recent_rows = []
 
-    recent = [_row_to_match(r, is_completed=True) for r in recent_rows]
+    seen_leagues: set[str] = set()
+    deduped_recent: list[dict] = []
+    for r in recent_rows:
+        lid = str(r.get("league_id", ""))
+        if lid in seen_leagues:
+            continue
+        seen_leagues.add(lid)
+        deduped_recent.append(_row_to_match(r, is_completed=True))
+        if len(deduped_recent) >= _MATCH_BUCKET_LIMIT:
+            break
 
-    if not upcoming and not recent:
-        return {"live": [], "upcoming": [], "recent": [], "message": "World Cup 2026 begins June 11"}
+    if not live and not upcoming and not deduped_recent:
+        return {
+            "live": [],
+            "upcoming": [],
+            "recent": [],
+            "message": "World Cup 2026 begins June 11",
+        }
 
-    return {"live": [], "upcoming": upcoming, "recent": recent}
+    return {"live": live, "upcoming": upcoming, "recent": deduped_recent}
 
 
 @app.get("/matches/score/{fixture_id}")
