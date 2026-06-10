@@ -308,7 +308,7 @@ def query(request: QueryRequest) -> QueryResponse:
         logger.info("POST /query: refresh intent detected — dispatching background thread")
         threading.Thread(target=agent_tools.refresh_scouting_data, daemon=True).start()
         answer = (
-            "🔄 Scouting data refresh started — watch the progress panel below. "
+            "🔄 Scouting data refresh started — watch the progress panel above. "
             "Teams, charts, and matches will reload automatically when the sync completes."
         )
         page_actions = _infer_page_actions(request.question, answer)
