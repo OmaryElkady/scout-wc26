@@ -102,10 +102,25 @@ class FootballAPIClient:
         return standings, team_ids
 
     def get_world_cup_fixtures(self, force_refresh: bool = False) -> list[dict]:
-        if not force_refresh and self._table_has_any_data("bronze_fixtures"):
-            logger.info("Fixtures cache hit, reading raw_json from Bronze")
-            rows = bq.run_query(f"SELECT raw_json FROM `{config.table('bronze_fixtures')}`")
-            return [json.loads(r["raw_json"]) for r in rows]
+        # Filter the cache by the currently-active league so we never return
+        # fixtures from a previous league switch. Without this filter the
+        # caller would re-write them with the new active league_id, mis-tagging
+        # (e.g.) UCL matches as World Cup 2026.
+        if not force_refresh:
+            league_id = _WORLD_CUP_LEAGUE_ID
+            try:
+                rows = bq.run_query(
+                    f"SELECT raw_json FROM `{config.table('bronze_fixtures')}` "
+                    f"WHERE league_id = '{int(league_id)}'"
+                )
+            except Exception as exc:
+                logger.warning("Fixtures cache check failed (%s) — falling back to API", exc)
+                rows = []
+            if rows:
+                logger.info(
+                    "Fixtures cache hit for league_id=%d (%d rows)", league_id, len(rows)
+                )
+                return [json.loads(r["raw_json"]) for r in rows]
 
         logger.info("Fetching World Cup fixtures from API (leagueid=%d)", _WORLD_CUP_LEAGUE_ID)
         data = self._get(
