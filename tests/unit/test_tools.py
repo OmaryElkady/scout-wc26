@@ -393,7 +393,13 @@ def test_direct_api_ingest_writes_fixtures_and_squads():
     ):
         _direct_api_ingest()
 
-    mock_write_fix.assert_called_once_with(fake_fixtures)
+    # Fixtures are written with an explicit league_id (snapshot of the active
+    # league at fetch time) — not relying on the module-level global at write.
+    assert mock_write_fix.call_count == 1
+    call_args, call_kwargs = mock_write_fix.call_args
+    assert call_args[0] == fake_fixtures
+    assert "league_id" in call_kwargs
+    assert isinstance(call_kwargs["league_id"], int)
     # Three unique teams: 1, 2, 3
     assert mock_fa.get_players_by_team.call_count == 3
     assert mock_write_sq.call_count == 3
