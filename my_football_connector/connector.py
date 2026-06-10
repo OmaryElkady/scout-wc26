@@ -1,10 +1,10 @@
-"""Fivetran connector for free-api-live-football-data — World Cup 2026 qualification.
+"""Fivetran connector for the free-api-live-football-data RapidAPI source.
 
-Syncs two tables:
-  fixtures  — all matches for league 10195 (UEFA WC Qualification)
-  players   — squad members for each team found in those fixtures
+Syncs two tables to the destination:
+    fixtures - all matches for the configured league
+    players  - squad members for each team found in those fixtures
 
-Run locally:  fivetran debug
+Run locally:  python connector.py
 Deploy:       fivetran deploy
 """
 
@@ -18,32 +18,17 @@ from fivetran_connector_sdk import Operations as op
 _BASE_URL = "https://free-api-live-football-data.p.rapidapi.com"
 _LEAGUE_ID = 10195
 
-# Each team squad costs one API call. Free tier allows 100 req/day; fixtures
-# already consumes one, so cap player syncs at 10 teams per run.
+# Each squad fetch is one API call. The RapidAPI free tier allows 100/day and
+# the fixtures call already burns one, so cap player syncs at 10 teams per run.
 _MAX_TEAMS = 10
 
 
-# ---------------------------------------------------------------------------
-# Schema
-# ---------------------------------------------------------------------------
-
 def schema(configuration: dict):
-    """Declare tables and primary keys. Column types inferred from upserted data."""
     return [
-        {
-            "table": "fixtures",
-            "primary_key": ["fixture_id"],
-        },
-        {
-            "table": "players",
-            "primary_key": ["player_id", "team_id"],
-        },
+        {"table": "fixtures", "primary_key": ["fixture_id"]},
+        {"table": "players", "primary_key": ["player_id", "team_id"]},
     ]
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _headers(configuration: dict) -> dict:
     return {
@@ -61,12 +46,7 @@ def _get(headers: dict, endpoint: str, params: dict | None = None) -> dict:
 
 
 def _map_fixture(match: dict) -> dict:
-    """Flatten a raw fixture dict to the fixtures table schema.
-
-    Confirmed live field paths from football_api.py / bq_loader._map_fixture():
-      home/away contain: id, name, score
-      status contains:   utcTime, reason.short
-    """
+    """Flatten a raw fixture dict into a row matching the fixtures table."""
     home = match.get("home") or {}
     away = match.get("away") or {}
     status = match.get("status") or {}
@@ -98,15 +78,9 @@ def _teams_from_matches(matches: list) -> dict[str, str]:
     return teams
 
 
-# ---------------------------------------------------------------------------
-# Update (called by Fivetran on every sync)
-# ---------------------------------------------------------------------------
-
 def update(configuration: dict, state: dict):
-    """Sync fixtures then squad data. Uses direct op.upsert() — no yield needed."""
     hdrs = _headers(configuration)
 
-    # ── Step 1: Fixtures ─────────────────────────────────────────────────────
     log.info(f"Fetching fixtures for league {_LEAGUE_ID}")
     data = _get(hdrs, "/football-get-all-matches-by-league", {"leagueid": _LEAGUE_ID})
     matches = (data.get("response") or {}).get("matches", [])
@@ -115,10 +89,9 @@ def update(configuration: dict, state: dict):
     for match in matches:
         op.upsert("fixtures", _map_fixture(match))
 
-    # Checkpoint after fixtures so Fivetran can safely write if players fail.
+    # Checkpoint here so fixtures are durable even if the player loop fails.
     op.checkpoint(state={"step": "fixtures_done"})
 
-    # ── Step 2: Players ──────────────────────────────────────────────────────
     teams = _teams_from_matches(matches)
     team_sample = list(teams.items())[:_MAX_TEAMS]
     log.info(f"Syncing players for {len(team_sample)} of {len(teams)} teams (cap={_MAX_TEAMS})")
@@ -131,8 +104,6 @@ def update(configuration: dict, state: dict):
             log.warning(f"Squad fetch failed for team {team_id} ({team_name}): {exc}")
             continue
 
-        # Confirmed response path: response.list.squad (list of position groups)
-        # response.list.name is the canonical team name from the squad endpoint.
         squad_list = (resp.get("response") or {}).get("list") or {}
         resolved_name = squad_list.get("name") or team_name
         squad_groups = squad_list.get("squad") or []
@@ -140,8 +111,9 @@ def update(configuration: dict, state: dict):
         player_count = 0
         for group in squad_groups:
             for player in group.get("members") or []:
+                # Coaches share the player schema but carry this flag.
                 if player.get("excludeFromRanking"):
-                    continue  # coaches have this flag set; skip them
+                    continue
 
                 age_raw = player.get("age")
                 shirt_raw = player.get("shirtNumber")
@@ -159,15 +131,12 @@ def update(configuration: dict, state: dict):
         total_players += player_count
         log.info(f"  {resolved_name}: {player_count} players")
 
-    log.info(f"Sync complete — {len(matches)} fixtures, {total_players} players")
+    log.info(f"Sync complete: {len(matches)} fixtures, {total_players} players")
     op.checkpoint(state={})
 
 
-# ---------------------------------------------------------------------------
-# Connector entry point
-# ---------------------------------------------------------------------------
-
 connector = Connector(update=update, schema=schema)
+
 
 if __name__ == "__main__":
     with open("configuration.json", "r") as f:
