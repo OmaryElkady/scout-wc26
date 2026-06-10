@@ -302,6 +302,82 @@
     .fc-pill.d { background: rgba(139,148,158,.12); color: var(--muted); border: 1px solid rgba(139,148,158,.25); }
     .fc-pill.l { background: rgba(248,81,73,.15);   color: var(--red);   border: 1px solid rgba(248,81,73,.3); }
 
+    /* WC2026 placeholder banner + qualified-nations grid (shown when league 77
+       is active and no squad data has been ingested yet). */
+    .wc2026-banner {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      border: 1px solid #FFD700;
+      border-radius: 10px;
+      padding: 18px 20px;
+      margin-bottom: 18px;
+      color: #fff;
+    }
+    .wc2026-banner .wc-title {
+      font-size: 16px;
+      font-weight: 800;
+      color: #FFD700;
+      letter-spacing: .03em;
+      margin-bottom: 6px;
+    }
+    .wc2026-banner .wc-sub {
+      font-size: 13px;
+      color: #cbd5e1;
+      line-height: 1.5;
+    }
+    .wc2026-banner .wc-kickoff {
+      display: inline-block;
+      margin-top: 8px;
+      font-size: 11px;
+      font-weight: 700;
+      background: rgba(255,215,0,.15);
+      color: #FFD700;
+      border: 1px solid rgba(255,215,0,.4);
+      padding: 3px 10px;
+      border-radius: 12px;
+      letter-spacing: .04em;
+    }
+    .wc2026-groups {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+    }
+    @media (max-width: 1000px) {
+      .wc2026-groups { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 540px) {
+      .wc2026-groups { grid-template-columns: 1fr; }
+    }
+    .wc2026-group {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 12px 10px;
+    }
+    .wc2026-group .wc-group-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .8px;
+      text-transform: uppercase;
+      color: var(--primary);
+      margin-bottom: 8px;
+    }
+    .wc2026-group .wc-nation {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      color: #fff;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(139,148,158,.12);
+    }
+    .wc2026-group .wc-nation:last-child { border-bottom: none; }
+    .wc2026-group .wc-nation .wc-tba {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--muted);
+      letter-spacing: .04em;
+    }
+
     .table-wrap {
       overflow-x: auto;
       border-radius: 8px;
@@ -1721,6 +1797,64 @@
   let _teamsSortCol = 'points';
   let _teamsSortDir = -1;
 
+  // WC2026 league ID + the 48 qualified nations grouped A–L. Shown as a static
+  // placeholder when the backend signals status="coming_soon" for league 77
+  // (no fixture data until kickoff on June 11, 2026).
+  const _WC2026_LEAGUE_ID = 77;
+  const _WC2026_NATIONS = {
+    A: ["USA", "Panama", "Uruguay", "Albania"],
+    B: ["Argentina", "Chile", "Peru", "Canada"],
+    C: ["Mexico", "Jamaica", "Venezuela", "Ecuador"],
+    D: ["Brazil", "Paraguay", "Colombia", "Costa Rica"],
+    E: ["Germany", "Netherlands", "Hungary", "New Zealand"],
+    F: ["Portugal", "Croatia", "Denmark", "Cameroon"],
+    G: ["Spain", "Serbia", "Morocco", "Japan"],
+    H: ["France", "Belgium", "Ukraine", "Australia"],
+    I: ["England", "Switzerland", "Senegal", "Algeria"],
+    J: ["Italy", "Czech Republic", "Saudi Arabia", "Tunisia"],
+    K: ["South Korea", "Iran", "Iraq", "Ghana"],
+    L: ["Poland", "Turkey", "Ivory Coast", "Qatar"],
+  };
+
+  function _renderWC2026Placeholder(message, kickoff) {
+    const groupBlocks = Object.entries(_WC2026_NATIONS).map(([letter, nations]) => {
+      const rows = nations.map(n => `
+        <div class="wc-nation">
+          <span>${_escHtml(n)}</span>
+          <span class="wc-tba">SQUAD TBA</span>
+        </div>`).join('');
+      return `<div class="wc2026-group">
+        <div class="wc-group-title">Group ${letter}</div>
+        ${rows}
+      </div>`;
+    }).join('');
+
+    const msg = message || 'FIFA World Cup 2026 begins June 11, 2026. Squad and match data will appear here once the tournament begins.';
+    const kick = kickoff || '2026-06-11';
+    return `
+      <div class="wc2026-banner">
+        <div class="wc-title">⚽ FIFA WORLD CUP 2026 — COMING SOON</div>
+        <div class="wc-sub">${_escHtml(msg)}</div>
+        <div class="wc-kickoff">KICKOFF · ${_escHtml(kick)}</div>
+      </div>
+      <div class="wc2026-groups">${groupBlocks}</div>
+    `;
+  }
+
+  function _showWC2026Placeholder(message, kickoff) {
+    // Hide the All-Teams table + pagination, render the placeholder into the
+    // top-tab feature grid container (which is the panel users land on).
+    const grid = document.getElementById('feature-grid');
+    if (grid) grid.innerHTML = _renderWC2026Placeholder(message, kickoff);
+    const tbody = document.getElementById('teams-tbody');
+    if (tbody) tbody.innerHTML = `
+      <tr><td colspan="9">
+        <div class="empty-state">World Cup 2026 squads available June 11, 2026.</div>
+      </td></tr>`;
+    const pagination = document.getElementById('teams-pagination');
+    if (pagination) pagination.innerHTML = '';
+  }
+
   function _updateLeagueBadge(lid) {
     const badge = document.getElementById('league-badge');
     if (badge) badge.textContent = 'Showing: ' + (_leagueDisplayNames[lid] || `League ${lid}`);
@@ -1745,6 +1879,14 @@
       const res = await fetch(url);
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const data = await res.json();
+      // Backend signals WC2026 has no data yet — render the qualified-nations
+      // placeholder grid instead of an empty teams list. Skip caching so a
+      // later refresh (after kickoff) picks up real data immediately.
+      if (data.status === 'coming_soon' && Number(lid) === _WC2026_LEAGUE_ID) {
+        allTeams = [];
+        _showWC2026Placeholder(data.message, data.kickoff);
+        return;
+      }
       allTeams = (data.teams || []).map(t => ({
         ...t,
         points:    t.points    ?? (t.wins ?? 0) * 3 + (t.draws ?? 0),
