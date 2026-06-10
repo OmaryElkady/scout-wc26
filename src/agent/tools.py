@@ -643,6 +643,7 @@ def _direct_api_ingest(_emit=None, force_refresh_fixtures: bool = False) -> None
 
     from src.ingestion.bq_loader import write_bronze_fixtures, write_bronze_team_squads
     from src.utils.football_api import football_api
+    import src.utils.football_api as _fa_mod
 
     def _p(step: str, status: str, pct: int) -> None:
         if _emit is not None:
@@ -650,9 +651,12 @@ def _direct_api_ingest(_emit=None, force_refresh_fixtures: bool = False) -> None
 
     logger.info("Syncing latest football data directly from API...")
     _p("📡 Fetching fixtures from API...", "running", 25)
+    # Snapshot the active league ID *before* the fetch so we tag fixtures with
+    # the league we actually asked the API for, even if it changes mid-flight.
+    active_league_id = _fa_mod._WORLD_CUP_LEAGUE_ID
     try:
         fixtures = football_api.get_world_cup_fixtures(force_refresh=force_refresh_fixtures)
-        write_bronze_fixtures(fixtures)
+        write_bronze_fixtures(fixtures, league_id=active_league_id)
     except Exception as exc:
         logger.warning("Fixture fetch failed (non-fatal): %s", exc)
         fixtures = []
