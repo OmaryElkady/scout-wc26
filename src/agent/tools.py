@@ -5,6 +5,7 @@ from typing import Any, Optional
 from src.utils.bq_client import bq
 from src.utils.config import config
 from src.utils.progress import emit_progress
+from src.utils.text_normalize import unaccent, unaccent_sql
 
 logger = logging.getLogger(__name__)
 
@@ -136,9 +137,14 @@ def query_players(
     if position:
         other_conds.append("position = '" + _esc(_normalize_position(position)) + "'")
     if nationality:
-        other_conds.append("LOWER(nationality) LIKE '%" + _esc(nationality.lower()) + "%'")
+        # Accent-fold both sides so "Cote d'Ivoire" matches "Côte d'Ivoire" etc.
+        other_conds.append(
+            unaccent_sql("nationality") + " LIKE '%" + _esc(unaccent(nationality)) + "%'"
+        )
     if team_name:
-        other_conds.append("LOWER(team_name) LIKE '%" + _esc(team_name.lower()) + "%'")
+        other_conds.append(
+            unaccent_sql("team_name") + " LIKE '%" + _esc(unaccent(team_name)) + "%'"
+        )
     if min_age is not None:
         other_conds.append("age >= " + str(int(min_age)))
     if max_age is not None:
@@ -211,7 +217,9 @@ def query_team_summary(
     if team_id is not None:
         conditions.append("team_id = '" + _esc(str(team_id)) + "'")
     if team_name:
-        conditions.append("LOWER(team_name) LIKE '%" + _esc(team_name.lower()) + "%'")
+        conditions.append(
+            unaccent_sql("team_name") + " LIKE '%" + _esc(unaccent(team_name)) + "%'"
+        )
 
     logger.info("query_team_summary: team_name=%s team_id=%s", team_name, team_id)
 
@@ -264,7 +272,10 @@ def get_player_detail(
     if player_name:
         cleaned = _clean_player_name(player_name)
         if cleaned:
-            conditions.append("LOWER(name) LIKE '%" + _esc(cleaned.lower()) + "%'")
+            # Accent-fold so "Mbappe" finds "Mbappé", "Rudiger" finds "Rüdiger".
+            conditions.append(
+                unaccent_sql("name") + " LIKE '%" + _esc(unaccent(cleaned)) + "%'"
+            )
 
     if not conditions:
         logger.warning("get_player_detail called with no filters — returning empty")
@@ -357,7 +368,7 @@ def get_team_roster(team_name: str) -> list[dict[str, Any]]:
         "SELECT player_id, name, position, age, nationality, jersey_number "
         "FROM `" + table + "` "
         "WHERE league_id = '" + _esc(_get_active_league_id()) + "' "
-        "AND LOWER(team_name) LIKE '%" + _esc(team_name.lower()) + "%' "
+        "AND " + unaccent_sql("team_name") + " LIKE '%" + _esc(unaccent(team_name)) + "%' "
         "ORDER BY position, name"
     )
 
@@ -683,7 +694,12 @@ def _direct_api_ingest(_emit=None, force_refresh_fixtures: bool = False) -> None
             players = football_api.get_players_by_team(team_id)
             write_bronze_team_squads(team_id, players, team_name=team_name)
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        # max_workers=2 keeps us under BigQuery's 5-DML-ops/sec per-table quota.
+        # Each team triggers DELETE+LOAD on both bronze_team_squads and bronze_players
+        # (4 ops total) — 5 parallel workers used to burst 20 ops/sec and trigger
+        # 429 rate-limit errors mid-ingest. With 2 workers the burst stays ≤8 ops/sec,
+        # spread across two tables, which is below the per-table cap.
+        with ThreadPoolExecutor(max_workers=2) as executor:
             futures = {
                 executor.submit(_fetch_and_write, tid, tname): (tid, tname)
                 for tid, tname in team_list
