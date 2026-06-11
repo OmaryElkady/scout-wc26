@@ -447,6 +447,208 @@
     .fc-pill.d { background: var(--muted-3); color: #fff; box-shadow: 0 0 0 1px rgba(100,116,139,.4); }
     .fc-pill.l { background: var(--red);   color: #fff; box-shadow: 0 0 0 1px rgba(239,68,68,.4); }
 
+    .feature-card.clickable { cursor: pointer; }
+    .feature-card.clickable:hover .fc-name { color: #93c5fd; }
+
+    /* ── Team drill-down modal ────────────────────────────────────────────── */
+    .team-modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(2, 6, 23, 0.78);
+      backdrop-filter: blur(4px);
+      z-index: 1000;
+      display: none;
+      align-items: center; justify-content: center;
+      padding: 24px;
+      animation: tmFadeIn .2s ease-out;
+    }
+    .team-modal-overlay.visible { display: flex; }
+    @keyframes tmFadeIn { from { opacity: 0 } to { opacity: 1 } }
+    .team-modal-panel {
+      position: relative;
+      background: linear-gradient(180deg, var(--bg-elevated) 0%, #0f1626 100%);
+      border: 1px solid var(--border-hover);
+      border-radius: 16px;
+      width: min(94vw, 880px);
+      max-height: 88vh;
+      overflow-y: auto;
+      padding: 28px 28px 24px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(59,130,246,.18);
+      animation: tmPanelIn .25s cubic-bezier(.2,.9,.3,1.1);
+    }
+    @keyframes tmPanelIn { from { transform: translateY(12px) scale(.98); opacity: 0 } to { transform: none; opacity: 1 } }
+    .team-modal-close {
+      position: absolute; top: 14px; right: 14px;
+      background: rgba(148,163,184,.12);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      width: 32px; height: 32px;
+      border-radius: 8px;
+      font-size: 16px; font-weight: 700;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .15s, color .15s;
+    }
+    .team-modal-close:hover { background: rgba(239,68,68,.18); color: #f87171; }
+    .tm-header {
+      display: flex; align-items: center; gap: 14px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 18px;
+    }
+    .tm-flag {
+      width: 56px; height: 56px;
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 26px; font-weight: 800;
+      background: linear-gradient(135deg, var(--primary) 0%, #1d4ed8 100%);
+      color: #fff;
+      letter-spacing: -1px;
+      box-shadow: 0 6px 18px rgba(59,130,246,.4);
+    }
+    .tm-title {
+      flex: 1; min-width: 0;
+    }
+    .tm-title h2 {
+      font-size: 22px; font-weight: 800;
+      margin: 0 0 4px;
+      color: #fff;
+      line-height: 1.2;
+    }
+    .tm-meta {
+      display: flex; gap: 8px; flex-wrap: wrap;
+      align-items: center;
+    }
+    .tm-chip {
+      font-size: 11px; font-weight: 700;
+      padding: 3px 10px; border-radius: 20px;
+      letter-spacing: .3px;
+      background: rgba(59,130,246,.18);
+      color: #93c5fd;
+      border: 1px solid rgba(59,130,246,.3);
+    }
+    .tm-chip.formation {
+      background: rgba(245,158,11,.15);
+      color: var(--gold);
+      border-color: rgba(245,158,11,.35);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .tm-stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+    @media (max-width: 600px) {
+      .tm-stats { grid-template-columns: repeat(2, 1fr); }
+    }
+    .tm-stat {
+      background: rgba(15,23,42,.6);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 10px;
+      text-align: center;
+    }
+    .tm-stat-v {
+      font-size: 22px; font-weight: 800;
+      color: #fff;
+      line-height: 1;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .tm-stat-l {
+      font-size: 10px; font-weight: 600;
+      color: var(--muted);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-top: 5px;
+    }
+    .tm-stat-v.pos { color: var(--green); }
+    .tm-stat-v.neg { color: var(--red); }
+    .tm-section-title {
+      font-size: 12px; font-weight: 700;
+      color: var(--muted);
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      margin: 6px 0 12px;
+    }
+    .tm-squad {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+    @media (max-width: 700px) {
+      .tm-squad { grid-template-columns: repeat(2, 1fr); }
+    }
+    .tm-pos-col {
+      background: rgba(11,17,32,.5);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .tm-pos-head {
+      padding: 7px 10px;
+      font-size: 11px; font-weight: 800;
+      letter-spacing: 1.5px;
+      text-align: center;
+      color: #fff;
+      background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+      border-bottom: 1px solid var(--border);
+    }
+    .tm-pos-head.gk  { background: linear-gradient(180deg, rgba(245,158,11,.25), #1a1a2e); }
+    .tm-pos-head.def { background: linear-gradient(180deg, rgba(59,130,246,.25), #1a1a2e); }
+    .tm-pos-head.mid { background: linear-gradient(180deg, rgba(16,185,129,.25), #1a1a2e); }
+    .tm-pos-head.fwd { background: linear-gradient(180deg, rgba(239,68,68,.25), #1a1a2e); }
+    .tm-player {
+      padding: 8px 10px;
+      border-bottom: 1px solid rgba(255,255,255,.04);
+      cursor: pointer;
+      transition: background .12s;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .tm-player:last-child { border-bottom: none; }
+    .tm-player:hover { background: rgba(59,130,246,.12); }
+    .tm-player-jersey {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      width: 22px;
+      flex-shrink: 0;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .tm-player-info { flex: 1; min-width: 0; }
+    .tm-player-name {
+      font-size: 12px; font-weight: 600;
+      color: #fff;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .tm-player-age {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 1px;
+    }
+    .tm-empty {
+      padding: 12px 8px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--muted);
+      font-style: italic;
+    }
+    .tm-loading {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .tm-loading-spinner {
+      display: inline-block;
+      width: 28px; height: 28px;
+      border: 3px solid rgba(59,130,246,.2);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: tmSpin .8s linear infinite;
+      margin-bottom: 12px;
+    }
+    @keyframes tmSpin { to { transform: rotate(360deg); } }
+
     /* WC2026 placeholder banner + qualified-nations grid (shown when league 77
        is active and no squad data has been ingested yet). */
     .wc2026-banner {
@@ -1101,12 +1303,61 @@
     .flash-target { animation: flashTarget 1.2s ease-out; }
 
     /* ── Top Performers Leaderboard ── */
+    .lb-controls {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      justify-content: space-between;
+    }
     .lb-tabs {
       display: flex;
       gap: 8px;
-      margin-bottom: 16px;
       flex-wrap: wrap;
     }
+    .lb-toggle-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: .2px;
+      padding: 7px 12px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--bg-elevated);
+      user-select: none;
+      transition: background .15s, border-color .15s, color .15s;
+    }
+    .lb-toggle-label:hover { background: #1f2a40; color: #fff; border-color: var(--border-hover); }
+    .lb-toggle-label input[type="checkbox"] {
+      accent-color: var(--primary);
+      width: 14px; height: 14px;
+      cursor: pointer;
+      margin: 0;
+    }
+    .lb-expand-row {
+      margin-top: 12px;
+      text-align: center;
+    }
+    .lb-expand-btn {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: var(--font);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 8px 22px;
+      transition: background .15s, color .15s, border-color .15s, transform .1s;
+      letter-spacing: .4px;
+    }
+    .lb-expand-btn:hover { background: #1f2a40; color: #fff; border-color: var(--border-hover); }
+    .lb-expand-btn:active { transform: scale(.97); }
     .lb-tab-btn {
       background: var(--bg-elevated);
       border: 1px solid var(--border);
@@ -1330,6 +1581,19 @@
 
 <div class="league-switch-toast" id="league-toast"></div>
 
+<!-- ── Team drill-down modal ───────────────────────────────────────────── -->
+<div class="team-modal-overlay" id="team-modal" onclick="closeTeamModal(event)">
+  <div class="team-modal-panel" onclick="event.stopPropagation()">
+    <button class="team-modal-close" type="button" onclick="closeTeamModal()" aria-label="Close">✕</button>
+    <div id="team-modal-content">
+      <div class="tm-loading">
+        <div class="tm-loading-spinner"></div>
+        <div>Loading squad…</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <main>
 
   <!-- ── Section 1: Scout Agent (centerpiece — first in the layout) ── -->
@@ -1416,10 +1680,16 @@
       </div>
     </div>
     <div class="card-body">
-      <div class="lb-tabs">
-        <button class="lb-tab-btn active" onclick="switchLbTab('goals', this)">⚽ Goals</button>
-        <button class="lb-tab-btn" onclick="switchLbTab('assists', this)">🎯 Assists</button>
-        <button class="lb-tab-btn" onclick="switchLbTab('rating', this)">⭐ Rating</button>
+      <div class="lb-controls">
+        <div class="lb-tabs">
+          <button class="lb-tab-btn active" onclick="switchLbTab('goals', this)">⚽ Goals</button>
+          <button class="lb-tab-btn" onclick="switchLbTab('assists', this)">🎯 Assists</button>
+          <button class="lb-tab-btn" onclick="switchLbTab('rating', this)">⭐ Rating</button>
+        </div>
+        <label class="lb-toggle-label" title="Show top performers from every loaded league">
+          <input type="checkbox" id="all-leagues-toggle" onchange="loadLeaderboard()" />
+          <span>All Leagues</span>
+        </label>
       </div>
       <div class="lb-spinner" id="lb-spinner"></div>
       <div class="table-wrap">
@@ -1436,6 +1706,11 @@
             <tr><td colspan="4"><div class="lb-empty">Loading…</div></td></tr>
           </tbody>
         </table>
+      </div>
+      <div class="lb-expand-row">
+        <button class="lb-expand-btn" id="lb-expand-btn" type="button" onclick="toggleLbExpand()" style="display:none">
+          Show top 20 ▼
+        </button>
       </div>
     </div>
   </div>
@@ -2406,8 +2681,9 @@
       const rank = i + 1;
       const cls  = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : '';
       const lbl  = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `#${rank}`;
-      return `<div class="feature-card ${cls}">
-        <div class="fc-name" title="${t.team_name || ''}">${lbl} ${t.team_name || '—'}</div>
+      const safeName = _escHtml(t.team_name || '');
+      return `<div class="feature-card clickable ${cls}" onclick="openTeamModal(${JSON.stringify(t.team_name || '')})" title="View squad for ${safeName}">
+        <div class="fc-name" title="${safeName}">${lbl} ${safeName || '—'}</div>
         <div class="fc-pts">${t.points ?? '—'}</div>
         <div class="fc-pts-label">Points</div>
         <div class="fc-pills">
@@ -2435,9 +2711,10 @@
     const page  = sorted.slice(start, start + _TEAMS_PER_PAGE);
     tbody.innerHTML = page.map((t, i) => {
       const gd = t.goal_diff ?? 0;
-      return `<tr>
+      const safeName = _escHtml(t.team_name || '');
+      return `<tr style="cursor:pointer" onclick="openTeamModal(${JSON.stringify(t.team_name || '')})" title="View squad for ${safeName}">
         <td class="td-rank">${start + i + 1}</td>
-        <td class="td-team">${t.team_name || '—'}</td>
+        <td class="td-team">${safeName || '—'}</td>
         <td class="td-w">${t.wins ?? '—'}</td>
         <td>${t.draws ?? '—'}</td>
         <td class="td-l">${t.losses ?? '—'}</td>
@@ -3090,9 +3367,169 @@
 
   // switchLeague(selectEl) removed — replaced by LeagueManager.switchTo(id)
 
+  // ── Team drill-down modal ────────────────────────────────────────────────
+  // Opens a panel showing the full squad organised by position, basic team
+  // stats, and a derived formation guess. Click anywhere outside the panel
+  // (or the ✕ button, or press Escape) to close.
+
+  let _lastFocusBeforeModal = null;
+
+  async function openTeamModal(teamName) {
+    if (!teamName) return;
+    const modal = document.getElementById('team-modal');
+    const content = document.getElementById('team-modal-content');
+    if (!modal || !content) return;
+
+    _lastFocusBeforeModal = document.activeElement;
+    content.innerHTML = `
+      <div class="tm-loading">
+        <div class="tm-loading-spinner"></div>
+        <div>Loading squad for ${_escHtml(teamName)}…</div>
+      </div>`;
+    modal.classList.add('visible');
+
+    try {
+      const res = await fetch(`${API}/teams/${encodeURIComponent(teamName)}/detail`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      _renderTeamModal(data);
+    } catch (err) {
+      content.innerHTML = `
+        <div class="tm-loading" style="color:var(--red)">
+          ⚠ Could not load squad: ${_escHtml(err.message)}
+        </div>`;
+    }
+  }
+
+  function closeTeamModal(e) {
+    if (e && e.currentTarget && e.target && e.target !== e.currentTarget && e.target.id !== 'team-modal') {
+      return; // click was on the panel itself, not the overlay
+    }
+    const modal = document.getElementById('team-modal');
+    if (modal) modal.classList.remove('visible');
+    if (_lastFocusBeforeModal && typeof _lastFocusBeforeModal.focus === 'function') {
+      try { _lastFocusBeforeModal.focus(); } catch (_) {}
+    }
+  }
+
+  // Escape key closes the modal
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const modal = document.getElementById('team-modal');
+    if (modal && modal.classList.contains('visible')) closeTeamModal();
+  });
+
+  function _teamInitials(name) {
+    const parts = (name || '').trim().split(/\s+/);
+    if (!parts.length) return '?';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+
+  function _renderTeamModal(data) {
+    const content = document.getElementById('team-modal-content');
+    if (!content) return;
+    const summary = data.summary || {};
+    const squad = data.squad || [];
+    const byPos = { GK: [], DEF: [], MID: [], FWD: [], UNKNOWN: [] };
+    squad.forEach(p => {
+      const k = (p.position || 'UNKNOWN').toUpperCase();
+      (byPos[k] || byPos.UNKNOWN).push(p);
+    });
+
+    const gd = Number(summary.goal_difference ?? 0);
+    const gdCls = gd > 0 ? 'pos' : gd < 0 ? 'neg' : '';
+    const gdLabel = gd > 0 ? `+${gd}` : String(gd);
+
+    const teamName = data.team_name || '—';
+    const safeTeamName = _escHtml(teamName);
+    const leagueName = data.league_name || '';
+
+    const headerHtml = `
+      <div class="tm-header">
+        <div class="tm-flag">${_escHtml(_teamInitials(teamName))}</div>
+        <div class="tm-title">
+          <h2>${safeTeamName}</h2>
+          <div class="tm-meta">
+            ${leagueName ? `<span class="tm-chip">🏆 ${_escHtml(leagueName)}</span>` : ''}
+            <span class="tm-chip formation">${_escHtml(data.formation || '—')}</span>
+            <span class="tm-chip">${data.total_players} players</span>
+          </div>
+        </div>
+      </div>`;
+
+    const statsHtml = `
+      <div class="tm-stats">
+        <div class="tm-stat">
+          <div class="tm-stat-v">${summary.points ?? '—'}</div>
+          <div class="tm-stat-l">Points</div>
+        </div>
+        <div class="tm-stat">
+          <div class="tm-stat-v">${summary.matches_played ?? '—'}</div>
+          <div class="tm-stat-l">Matches</div>
+        </div>
+        <div class="tm-stat">
+          <div class="tm-stat-v" style="font-size:14px;line-height:1.4">
+            <span style="color:var(--green)">${summary.wins ?? 0}W</span> /
+            <span style="color:var(--muted)">${summary.draws ?? 0}D</span> /
+            <span style="color:var(--red)">${summary.losses ?? 0}L</span>
+          </div>
+          <div class="tm-stat-l">Record</div>
+        </div>
+        <div class="tm-stat">
+          <div class="tm-stat-v ${gdCls}">${gdLabel}</div>
+          <div class="tm-stat-l">Goal Diff</div>
+        </div>
+      </div>`;
+
+    const colHtml = (label, key) => {
+      const players = byPos[key] || [];
+      const body = players.length
+        ? players.map(p => `
+            <div class="tm-player" onclick="event.stopPropagation(); _openReportFromModal(${JSON.stringify(p.name || '')})">
+              <span class="tm-player-jersey">${p.jersey_number != null ? '#' + p.jersey_number : '—'}</span>
+              <div class="tm-player-info">
+                <div class="tm-player-name">${_escHtml(p.name || '—')}</div>
+                <div class="tm-player-age">${p.age ? 'Age ' + p.age : ''}${p.nationality && p.nationality !== teamName ? ' · ' + _escHtml(p.nationality) : ''}</div>
+              </div>
+            </div>`).join('')
+        : '<div class="tm-empty">none</div>';
+      return `
+        <div class="tm-pos-col">
+          <div class="tm-pos-head ${label.toLowerCase()}">${label}</div>
+          ${body}
+        </div>`;
+    };
+
+    const squadHtml = `
+      <div class="tm-section-title">Squad by Position</div>
+      <div class="tm-squad">
+        ${colHtml('GK',  'GK')}
+        ${colHtml('DEF', 'DEF')}
+        ${colHtml('MID', 'MID')}
+        ${colHtml('FWD', 'FWD')}
+      </div>`;
+
+    content.innerHTML = headerHtml + statsHtml + squadHtml;
+  }
+
+  // Close the modal, scroll to the report card, and trigger a player report.
+  function _openReportFromModal(name) {
+    if (!name) return;
+    closeTeamModal();
+    const inp = document.getElementById('player-input');
+    if (inp) inp.value = name;
+    const card = document.getElementById('section-reports');
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setTimeout(() => { fetchReport(); }, 350);
+  }
+
   // ── Top Performers Leaderboard ────────────────────────────────────────────
 
   let _lbStat = 'goals';
+  let _lbExpanded = false;
+  const _LB_COLLAPSED = 10;
+  const _LB_EXPANDED = 20;
 
   function switchLbTab(stat, btnEl) {
     _lbStat = stat;
@@ -3101,27 +3538,46 @@
     loadLeaderboard(stat);
   }
 
+  function toggleLbExpand() {
+    _lbExpanded = !_lbExpanded;
+    loadLeaderboard(_lbStat);
+  }
+
   async function loadLeaderboard(stat) {
     stat = stat || _lbStat;
     const spinner = document.getElementById('lb-spinner');
     const tbody   = document.getElementById('lb-tbody');
     const hdr     = document.getElementById('lb-value-header');
+    const expandBtn = document.getElementById('lb-expand-btn');
+    const allLeaguesToggle = document.getElementById('all-leagues-toggle');
+    const allLeagues = !!(allLeaguesToggle && allLeaguesToggle.checked);
+    const limit = _lbExpanded ? _LB_EXPANDED : _LB_COLLAPSED;
+
     if (spinner) spinner.classList.add('visible');
     if (hdr) {
       hdr.textContent = stat === 'goals' ? 'Goals' : stat === 'assists' ? 'Assists' : 'Rating';
     }
     try {
-      const res = await fetch(`${API}/leaderboard?stat=${encodeURIComponent(stat)}&limit=10&league_id=${_activeLeagueId}`);
+      const params = new URLSearchParams({
+        stat,
+        limit: String(limit),
+      });
+      if (allLeagues) {
+        params.set('all_leagues', 'true');
+      } else {
+        params.set('league_id', String(_activeLeagueId));
+      }
+      const res = await fetch(`${API}/leaderboard?${params.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const players = data.players || [];
       if (!players.length) {
         if (tbody) tbody.innerHTML =
           '<tr><td colspan="4"><div class="lb-empty">No data yet — refresh scouting data to load top performers</div></td></tr>';
+        if (expandBtn) expandBtn.style.display = 'none';
         return;
       }
       const medals = ['🥇', '🥈', '🥉'];
-      // Compute max value for relative-width bar
       const rawVals = players.map(p => {
         if (stat === 'goals')   return Number(p.goals   ?? 0);
         if (stat === 'assists') return Number(p.assists ?? 0);
@@ -3140,8 +3596,8 @@
         const rowCls = i < 3 ? `rank-row-${i + 1}` : '';
         return `<tr class="${rowCls}">
           <td class="lb-rank">${rankDisplay}</td>
-          <td class="lb-player">${p.player_name || '—'}</td>
-          <td class="lb-team">${p.team_name || '—'}</td>
+          <td class="lb-player">${_escHtml(p.player_name || '—')}</td>
+          <td class="lb-team">${_escHtml(p.team_name || '—')}</td>
           <td>
             <div class="lb-bar-wrap">
               <div class="lb-bar" style="width:${pct}px"></div>
@@ -3150,9 +3606,21 @@
           </td>
         </tr>`;
       }).join('');
+
+      // Show expand button only when the current page is full (otherwise the
+      // backend has no more rows to give us anyway).
+      if (expandBtn) {
+        if (players.length >= _LB_COLLAPSED) {
+          expandBtn.style.display = '';
+          expandBtn.textContent = _lbExpanded ? 'Show top 10 ▲' : 'Show top 20 ▼';
+        } else {
+          expandBtn.style.display = 'none';
+        }
+      }
     } catch (err) {
       if (tbody) tbody.innerHTML =
         `<tr><td colspan="4"><div class="lb-empty">⚠ ${err.message}</div></td></tr>`;
+      if (expandBtn) expandBtn.style.display = 'none';
     } finally {
       if (spinner) spinner.classList.remove('visible');
     }
