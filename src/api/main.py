@@ -92,12 +92,30 @@ _KNOWN_LEAGUES_FOR_ACTIONS: dict[str, str] = {
 }
 
 
-_REPORT_NAME_STRIP = {"generate", "create", "make", "show", "download", "get", "build", "produce", "view", "display"}
+_REPORT_NAME_STRIP = {
+    "generate", "create", "make", "show", "download", "get", "build", "produce",
+    "view", "display", "give", "fetch", "find", "pull", "save", "export", "me",
+    "a", "an", "the", "please",
+}
+_REPORT_NAME_STOPWORDS = {
+    "a", "an", "the", "any", "all", "report", "scouting", "pdf",
+    "me", "for", "about", "please", "of", "on",
+}
 
 
 def _extract_player_name_from_report_q(question: str) -> str:
-    """Extract player name from a report request question."""
-    # "for/about <Name>"
+    """Extract player name from a report request question.
+
+    Handles many phrasings (case-insensitive):
+        "Generate Bellingham's scouting report" -> "Bellingham"
+        "generate messi's report"               -> "messi"
+        "show me messi report"                  -> "messi"
+        "download mbappe scouting report"       -> "mbappe"
+        "generate report for messi"             -> "messi"
+        "create a scouting report about Bellingham" -> "Bellingham"
+        "messi report"                          -> "messi"
+    """
+    # 1. "for/about <Name>"
     for prep in ("for", "about"):
         m = re.search(
             rf"\b{prep}\b\s+([A-Za-z][a-zA-Z]+(?:\s+[A-Za-z][a-zA-Z]+){{0,2}})",
@@ -106,12 +124,12 @@ def _extract_player_name_from_report_q(question: str) -> str:
         )
         if m:
             name = m.group(1).strip()
-            if name.lower() not in {"a", "an", "the", "any", "all", "report", "scouting", "pdf"}:
+            if name.lower() not in _REPORT_NAME_STOPWORDS:
                 return name
-    # "<Name>'s (scouting) report" — greedy match may capture a leading action verb
-    # e.g. "Generate Bellingham's scouting report" → captures "Generate Bellingham"
+
+    # 2. "<Name>'s (scouting) report"
     m = re.search(
-        r"([A-Za-z][a-zA-Z]+(?:\s+[A-Za-z][a-zA-Z]+){0,2})'s\s+(?:scouting\s+)?report",
+        r"([A-Za-z][a-zA-Z]+(?:\s+[A-Za-z][a-zA-Z]+){0,2})['’]s\s+(?:scouting\s+)?report",
         question,
         re.IGNORECASE,
     )
@@ -122,6 +140,25 @@ def _extract_player_name_from_report_q(question: str) -> str:
         name = " ".join(words)
         if name:
             return name
+
+    # 3. "<Name> (scouting) report" with no possessive (e.g. "messi report",
+    #     "download mbappe scouting report", "show me messi report").
+    m = re.search(
+        r"([A-Za-z][a-zA-Z]+(?:\s+[A-Za-z][a-zA-Z]+){0,2})\s+(?:scouting\s+)?report\b",
+        question,
+        re.IGNORECASE,
+    )
+    if m:
+        words = m.group(1).strip().split()
+        while words and words[0].lower() in _REPORT_NAME_STRIP:
+            words.pop(0)
+        # Strip trailing "scouting" — greedy match can absorb it as a name word
+        while words and words[-1].lower() in {"scouting", "report"}:
+            words.pop()
+        name = " ".join(words)
+        if name and name.lower() not in _REPORT_NAME_STOPWORDS:
+            return name
+
     return ""
 
 
@@ -249,6 +286,30 @@ def health() -> dict:
     return {"status": "ok", "model": _MODEL, "dataset": config.BQ_DATASET}
 
 
+def _loaded_league_ids() -> set[int]:
+    """Return league IDs that already have player data in BigQuery.
+
+    Used by /state to flag pre-loaded leagues (green dot in the dropdown) and
+    by /admin/switch-league to skip the 60s ingest when data is already present.
+    Returns an empty set on any error so callers fall back to the slow path.
+    """
+    table = config.table("gold_player_stats")
+    try:
+        rows = bq.run_query(
+            "SELECT DISTINCT league_id FROM `" + table + "` WHERE league_id IS NOT NULL"
+        )
+    except Exception as exc:
+        logger.warning("_loaded_league_ids query failed: %s", exc)
+        return set()
+    out: set[int] = set()
+    for r in rows:
+        try:
+            out.add(int(r["league_id"]))
+        except (TypeError, ValueError, KeyError):
+            continue
+    return out
+
+
 @app.get("/state")
 def get_state() -> dict:
     """Single source of truth for frontend state — active league and available leagues."""
@@ -257,9 +318,14 @@ def get_state() -> dict:
         (lg["display"] for lg in _AVAILABLE_LEAGUES if lg["id"] == active_id),
         _active_league.get("name", ""),
     )
+    loaded = _loaded_league_ids()
+    leagues_with_status = [
+        {**lg, "loaded": lg["id"] in loaded} for lg in _AVAILABLE_LEAGUES
+    ]
     return {
         "active_league": {"id": active_id, "display": display},
-        "available_leagues": _AVAILABLE_LEAGUES,
+        "available_leagues": leagues_with_status,
+        "loaded_leagues": sorted(loaded),
     }
 
 
@@ -509,11 +575,22 @@ def chart_ai_generate(body: ChartRequest) -> dict:
 
 
 @app.get("/leaderboard")
-def leaderboard(stat: str = "goals", limit: int = 10, league_id: Optional[int] = None) -> dict:
+def leaderboard(
+    stat: str = "goals",
+    limit: int = 10,
+    league_id: Optional[int] = None,
+    all_leagues: bool = False,
+) -> dict:
+    """Return top performers ranked by goals, assists, or rating.
+
+    `gold_top_performers` currently has no league_id column so the league_id
+    and all_leagues params are passthrough — the underlying data already spans
+    every loaded league. Reserved for when per-league filtering is added.
+    """
     valid = {"goals", "assists", "rating"}
     if stat not in valid:
         stat = "goals"
-    safe_limit = min(max(1, int(limit)), 20)
+    safe_limit = min(max(1, int(limit)), 50)
     table = config.table("gold_top_performers")
     sql = (
         "SELECT player_name, team_name, "
@@ -536,6 +613,7 @@ def leaderboard(stat: str = "goals", limit: int = 10, league_id: Optional[int] =
         "players": rows,
         "stat": stat,
         "league": _active_league.get("name", ""),
+        "all_leagues": all_leagues,
     }
 
 
@@ -1123,6 +1201,83 @@ _WC2026_COMING_SOON_MSG = (
 )
 
 
+_POSITION_ORDER = {"GK": 1, "DEF": 2, "MID": 3, "FWD": 4, "UNKNOWN": 5}
+
+
+@app.get("/teams/{team_name}/detail")
+def team_detail(team_name: str) -> dict:
+    """Return full squad + summary for a single team across all leagues.
+
+    Used by the clickable team-card drill-down in the demo UI. Searches
+    accent-folded so 'Garcia' matches 'García', etc. Returns a derived
+    formation string (e.g. "1-4-3-3") computed from position counts.
+    """
+    logger.info("GET /teams/%s/detail", team_name)
+    players_tbl = config.table("gold_player_stats")
+    teams_tbl = config.table("gold_team_summary")
+    folded = _esc(unaccent(team_name))
+
+    # Pull players from every league — drill-down should work for any team the
+    # user clicked, regardless of which league is active now.
+    players_sql = (
+        "SELECT name, position, age, jersey_number, nationality, "
+        "team_name, league_id "
+        "FROM `" + players_tbl + "` "
+        "WHERE " + unaccent_sql("team_name") + " LIKE '%" + folded + "%' "
+        "ORDER BY "
+        " CASE position "
+        "   WHEN 'GK' THEN 1 WHEN 'DEF' THEN 2 "
+        "   WHEN 'MID' THEN 3 WHEN 'FWD' THEN 4 ELSE 5 END, "
+        " name"
+    )
+    try:
+        players = bq.run_query(players_sql)
+    except Exception as exc:
+        logger.warning("team_detail player query failed: %s", exc)
+        players = []
+
+    summary_sql = (
+        "SELECT team_name, matches_played, wins, draws, losses, "
+        "goals_for, goals_against, goal_difference, points, league_id "
+        "FROM `" + teams_tbl + "` "
+        "WHERE " + unaccent_sql("team_name") + " LIKE '%" + folded + "%' "
+        "ORDER BY points DESC LIMIT 1"
+    )
+    try:
+        srows = bq.run_query(summary_sql)
+        summary = srows[0] if srows else {}
+    except Exception as exc:
+        logger.warning("team_detail summary query failed: %s", exc)
+        summary = {}
+
+    pos_counts: dict[str, int] = {}
+    for p in players:
+        pos = p.get("position") or "UNKNOWN"
+        pos_counts[pos] = pos_counts.get(pos, 0) + 1
+    n_def = pos_counts.get("DEF", 0)
+    n_mid = pos_counts.get("MID", 0)
+    n_fwd = pos_counts.get("FWD", 0)
+    formation = f"1-{n_def}-{n_mid}-{n_fwd}" if (n_def or n_mid or n_fwd) else "—"
+
+    canonical_name = players[0].get("team_name") if players else (
+        summary.get("team_name") if summary else team_name
+    )
+    league_id = (summary.get("league_id") if summary else (
+        players[0].get("league_id") if players else None
+    ))
+
+    return {
+        "team_name": canonical_name or team_name,
+        "league_id": league_id,
+        "league_name": _LEAGUE_NAME_BY_ID.get(str(league_id), ""),
+        "formation": formation,
+        "total_players": len(players),
+        "position_counts": pos_counts,
+        "summary": summary,
+        "squad": players,
+    }
+
+
 @app.get("/teams", response_model=TeamListResponse)
 def teams(league_id: Optional[int] = None) -> TeamListResponse:
     logger.info("GET /teams: league_id=%s", league_id)
@@ -1171,26 +1326,46 @@ def admin_leagues() -> dict:
 
 @app.post("/admin/switch-league")
 def admin_switch_league(body: SwitchLeagueRequest) -> dict:
-    from src.utils.progress import reset_progress
+    from src.utils.progress import emit_progress, reset_progress
+    import src.utils.football_api as _fa_mod
 
     logger.info("POST /admin/switch-league: id=%d name=%s", body.league_id, body.league_name)
     _active_league["id"] = body.league_id
     _active_league["name"] = body.league_name
 
+    display = next(
+        (lg["display"] for lg in _AVAILABLE_LEAGUES if lg["id"] == body.league_id),
+        body.league_name,
+    )
+
     reset_progress()
+
+    # Fast path: data already exists for this league — just flip the active
+    # pointer, emit a single 'complete' progress step, and skip the 60s ingest.
+    if body.league_id in _loaded_league_ids():
+        logger.info(
+            "POST /admin/switch-league: fast path for id=%d (data already loaded)",
+            body.league_id,
+        )
+        _fa_mod._WORLD_CUP_LEAGUE_ID = body.league_id
+        emit_progress(f"✅ Already loaded — switched to {display}", "done", 100)
+        return {
+            "status": "started",
+            "message": f"Switched to '{display}' (data already loaded)",
+            "league": {"id": body.league_id, "display": display},
+            "ingested": False,
+        }
+
     threading.Thread(
         target=agent_tools.switch_league,
         args=(body.league_name,),
         daemon=True,
     ).start()
-    display = next(
-        (lg["display"] for lg in _AVAILABLE_LEAGUES if lg["id"] == body.league_id),
-        body.league_name,
-    )
     return {
         "status": "started",
         "message": f"Switching to '{display}'...",
         "league": {"id": body.league_id, "display": display},
+        "ingested": True,
     }
 
 
