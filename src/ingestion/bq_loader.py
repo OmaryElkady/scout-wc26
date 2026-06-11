@@ -85,7 +85,8 @@ def write_bronze_players(rows: list[dict]) -> None:
     ts = _now()
     stamped = [{**row, "ingested_at": ts, "source": _SOURCE} for row in rows]
     logger.info("Writing %d rows to bronze_players", len(stamped))
-    bq.insert_rows("bronze_players", stamped)
+    # Legacy path with no key — clear the whole table to stay idempotent.
+    bq.replace_rows("bronze_players", stamped, where_sql="1=1")
 
 
 def write_bronze_fixtures(rows: list[dict], league_id: int | None = None) -> None:
@@ -97,6 +98,10 @@ def write_bronze_fixtures(rows: list[dict], league_id: int | None = None) -> Non
     a stale cache returns fixtures from a previous league). Defaults to
     _WORLD_CUP_LEAGUE_ID for backwards compatibility with callers that
     have not been updated yet, but emits a warning when used.
+
+    Idempotent: deletes existing rows for the same league_id before loading
+    the new batch, so re-running refresh on the same league does not bloat
+    Bronze with duplicate fixture snapshots.
     """
     if not rows:
         logger.warning("write_bronze_fixtures called with no rows, skipping")
@@ -113,7 +118,11 @@ def write_bronze_fixtures(rows: list[dict], league_id: int | None = None) -> Non
     logger.info(
         "Writing %d rows to bronze_fixtures (league_id=%d)", len(mapped), league_id
     )
-    bq.insert_rows("bronze_fixtures", mapped)
+    bq.replace_rows(
+        "bronze_fixtures",
+        mapped,
+        where_sql=f"league_id = '{int(league_id)}'",
+    )
 
 
 def write_bronze_standings(rows: list[dict]) -> None:
@@ -123,7 +132,7 @@ def write_bronze_standings(rows: list[dict]) -> None:
     ts = _now()
     stamped = [{**row, "ingested_at": ts, "source": _SOURCE} for row in rows]
     logger.info("Writing %d rows to bronze_standings", len(stamped))
-    bq.insert_rows("bronze_standings", stamped)
+    bq.replace_rows("bronze_standings", stamped, where_sql="1=1")
 
 
 def write_bronze_top_performers(scorers: list, assisters: list, rated: list) -> None:
@@ -176,17 +185,34 @@ def write_bronze_top_performers(scorers: list, assisters: list, rated: list) -> 
         logger.warning("write_bronze_top_performers: no rows to write, skipping")
         return
     logger.info("Writing %d rows to bronze_top_performers", len(rows))
-    bq.insert_rows("bronze_top_performers", rows)
+    # Top performers is league-scoped on the API side — each refresh pulls all
+    # three lists for the active league. Replace the whole table so the gold
+    # transform never sees stale snapshots from a prior league switch.
+    bq.replace_rows("bronze_top_performers", rows, where_sql="1=1")
 
 
 def write_bronze_team_squads(team_id: int, rows: list[dict], team_name: str = "") -> None:
+    """Write a team's squad to bronze_team_squads AND bronze_players.
+
+    Idempotent per team — deletes existing rows for this team_id before
+    loading. Without the replace pattern, every refresh used to stack another
+    full copy of every player onto Bronze (we saw a single player_id 10,384x).
+    """
     if not rows:
         logger.warning("write_bronze_team_squads called with no rows for team %d, skipping", team_id)
         return
     ts = _now()
     compact = [_map_squad_member(r, team_id, team_name, ts) for r in rows]
     logger.info("Writing %d rows to bronze_team_squads for team %d", len(compact), team_id)
-    bq.insert_rows("bronze_team_squads", compact)
+    bq.replace_rows(
+        "bronze_team_squads",
+        compact,
+        where_sql=f"team_id = '{int(team_id)}'",
+    )
     full = [_map_squad_member_to_bronze_players(r, team_id, team_name, ts) for r in rows]
     logger.info("Writing %d rows to bronze_players for team %d", len(full), team_id)
-    bq.insert_rows("bronze_players", full)
+    bq.replace_rows(
+        "bronze_players",
+        full,
+        where_sql=f"team_id = '{int(team_id)}'",
+    )
