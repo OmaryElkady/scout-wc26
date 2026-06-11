@@ -1316,6 +1316,92 @@ def refresh() -> dict:
     return {"status": "started", "message": "Data refresh started in background."}
 
 
+def _backfill_leaderboard_worker(league_ids: list[int]) -> None:
+    """Fetch top performers for each loaded league and rebuild the gold table.
+
+    The API only returns 3 players per stat per league, so a single refresh
+    leaves the leaderboard capped at 3. Iterating every loaded league and
+    appending into the (now team-scoped) bronze table accumulates 3 × N
+    players per stat across N leagues.
+    """
+    from src.utils.progress import emit_progress
+    from src.ingestion.bq_loader import write_bronze_top_performers
+    from src.pipeline.transform import run_all
+    import src.utils.football_api as _fa_mod
+    from src.utils.football_api import football_api
+
+    original_lid = _fa_mod._WORLD_CUP_LEAGUE_ID
+    total = len(league_ids)
+    completed = 0
+    emit_progress(
+        f"📊 Backfilling top performers for {total} leagues...",
+        "running",
+        5,
+    )
+    try:
+        for lid in league_ids:
+            try:
+                _fa_mod._WORLD_CUP_LEAGUE_ID = lid
+                scorers = football_api.get_top_scorers(league_id=lid)
+                assisters = football_api.get_top_assisters(league_id=lid)
+                rated = football_api.get_top_rated(league_id=lid)
+                write_bronze_top_performers(scorers, assisters, rated)
+                logger.info(
+                    "backfill_leaderboard: league %d → %d/%d/%d (s/a/r)",
+                    lid, len(scorers), len(assisters), len(rated),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "backfill_leaderboard: league %d failed (continuing): %s", lid, exc
+                )
+            completed += 1
+            pct = 5 + int(80 * completed / max(total, 1))
+            emit_progress(
+                f"📊 Leagues processed: {completed}/{total}",
+                "running",
+                pct,
+            )
+
+        emit_progress("⚙️ Rebuilding leaderboard table...", "running", 90)
+        try:
+            run_all()
+        except Exception as exc:
+            logger.error("backfill_leaderboard: gold transform failed: %s", exc)
+            emit_progress("❌ Pipeline failed", "error", 100)
+            return
+        emit_progress("✅ Leaderboard backfill complete", "done", 100)
+    finally:
+        _fa_mod._WORLD_CUP_LEAGUE_ID = original_lid
+
+
+@app.post("/admin/backfill-leaderboard")
+def admin_backfill_leaderboard() -> dict:
+    """Refresh top performers for every loaded league so the leaderboard
+    accumulates beyond the 3-player-per-league API cap.
+    """
+    from src.utils.progress import reset_progress
+
+    logger.info("POST /admin/backfill-leaderboard")
+    loaded = sorted(_loaded_league_ids())
+    if not loaded:
+        return {
+            "status": "skipped",
+            "message": "No loaded leagues to backfill.",
+            "league_count": 0,
+        }
+    reset_progress()
+    threading.Thread(
+        target=_backfill_leaderboard_worker,
+        args=(loaded,),
+        daemon=True,
+    ).start()
+    return {
+        "status": "started",
+        "message": f"Backfilling top performers for {len(loaded)} leagues in the background.",
+        "league_count": len(loaded),
+    }
+
+
 @app.get("/admin/leagues")
 def admin_leagues() -> dict:
     from src.utils.football_api import football_api as _fa

@@ -1690,6 +1690,14 @@
           <input type="checkbox" id="all-leagues-toggle" onchange="loadLeaderboard()" />
           <span>All Leagues</span>
         </label>
+        <button
+          class="lb-toggle-label"
+          id="lb-backfill-btn"
+          type="button"
+          onclick="backfillLeaderboard()"
+          title="Pull top performers for every loaded league (one-time backfill)">
+          <span>↻ Refresh All Leagues</span>
+        </button>
       </div>
       <div class="lb-spinner" id="lb-spinner"></div>
       <div class="table-wrap">
@@ -3645,6 +3653,34 @@
       if (expandBtn) expandBtn.style.display = 'none';
     } finally {
       if (spinner) spinner.classList.remove('visible');
+    }
+  }
+
+  // Trigger a one-time backfill of top performers across every loaded league.
+  // Polls progress so the user sees per-league ticks, then reloads the table.
+  async function backfillLeaderboard() {
+    const btn = document.getElementById('lb-backfill-btn');
+    if (btn) { btn.disabled = true; btn.querySelector('span').textContent = '↻ Backfilling…'; }
+    _showToast('Pulling top performers from every loaded league…', 'info');
+    try {
+      const res = await fetch(`${API}/admin/backfill-leaderboard`, { method: 'POST' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = await res.json();
+      if (body.status === 'skipped') {
+        _showToast('No loaded leagues to backfill yet.', 'error');
+        return;
+      }
+      const result = await pollProgress(180);
+      if (result.success) {
+        _showToast(`✓ Leaderboard backfilled across ${body.league_count} leagues`, 'success');
+        loadLeaderboard(_lbStat);
+      } else {
+        _showToast(`⚠ Backfill failed: ${result.error || 'unknown error'}`, 'error');
+      }
+    } catch (err) {
+      _showToast(`⚠ Backfill failed: ${err.message}`, 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.querySelector('span').textContent = '↻ Refresh All Leagues'; }
     }
   }
 
