@@ -185,10 +185,17 @@ def write_bronze_top_performers(scorers: list, assisters: list, rated: list) -> 
         logger.warning("write_bronze_top_performers: no rows to write, skipping")
         return
     logger.info("Writing %d rows to bronze_top_performers", len(rows))
-    # Top performers is league-scoped on the API side — each refresh pulls all
-    # three lists for the active league. Replace the whole table so the gold
-    # transform never sees stale snapshots from a prior league switch.
-    bq.replace_rows("bronze_top_performers", rows, where_sql="1=1")
+    # Scope the DELETE by team_name so refreshing one league only wipes its
+    # own teams' prior snapshots — keeps top performers from other loaded
+    # leagues alive so the leaderboard can accumulate across many leagues
+    # instead of showing only the 3 the API returns for one league.
+    team_names = sorted({r["team_name"] for r in rows if r.get("team_name")})
+    if team_names:
+        escaped = ", ".join("'" + n.replace("'", "''") + "'" for n in team_names)
+        where_sql = "team_name IN (" + escaped + ")"
+    else:
+        where_sql = "1=1"
+    bq.replace_rows("bronze_top_performers", rows, where_sql=where_sql)
 
 
 def write_bronze_team_squads(team_id: int, rows: list[dict], team_name: str = "") -> None:
