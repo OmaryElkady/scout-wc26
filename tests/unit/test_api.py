@@ -383,3 +383,201 @@ async def test_refresh_returns_started_status(mock_ref):
     data = response.json()
     assert data["status"] == "started"
     assert "message" in data
+
+
+# ---------------------------------------------------------------------------
+# GET /state — loaded_leagues field
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_state_includes_loaded_leagues_field():
+    """GET /state should expose which leagues already have data so the frontend
+    can render a 'loaded' indicator next to each dropdown option."""
+    with patch("src.api.main.bq") as mock_bq:
+        mock_bq.run_query.return_value = [{"league_id": "47"}, {"league_id": "140"}]
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/state")
+    assert response.status_code == 200
+    data = response.json()
+    assert "loaded_leagues" in data
+    assert 47 in data["loaded_leagues"]
+    assert 140 in data["loaded_leagues"]
+    # Each league in available_leagues should also have a `loaded` flag.
+    for lg in data["available_leagues"]:
+        assert "loaded" in lg
+    pl = next(lg for lg in data["available_leagues"] if lg["id"] == 47)
+    assert pl["loaded"] is True
+
+
+@pytest.mark.asyncio
+async def test_state_loaded_leagues_empty_when_bq_fails():
+    """BQ outage must not 500 the state endpoint — _loaded_league_ids should
+    catch and return an empty set."""
+    with patch("src.api.main.bq") as mock_bq:
+        mock_bq.run_query.side_effect = Exception("boom")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/state")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["loaded_leagues"] == []
+    for lg in data["available_leagues"]:
+        assert lg["loaded"] is False
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/switch-league — fast path when data already loaded
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_switch_league_fast_path_skips_ingest_when_loaded():
+    """When the requested league already has player data in BigQuery, the
+    switch should skip the 60s ingest and return ingested=False immediately.
+
+    The autouse _restore_active_league_state fixture restores the module
+    globals so this test's mutations don't leak into other tests.
+    """
+    with patch("src.api.main._loaded_league_ids", return_value={47, 140}), \
+         patch("src.agent.tools.switch_league") as mock_sw:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/admin/switch-league",
+                json={"league_id": 47, "league_name": "Premier League"},
+            )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ingested"] is False
+    mock_sw.assert_not_called()  # ingest thread was never started
+
+
+@pytest.mark.asyncio
+@patch("src.agent.tools.switch_league", return_value={"status": "switched"})
+async def test_switch_league_slow_path_triggers_ingest_when_not_loaded(mock_sw):
+    """When the requested league has no data, the switch should trigger the
+    background ingest thread and return ingested=True."""
+    with patch("src.api.main._loaded_league_ids", return_value={47}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/admin/switch-league",
+                json={"league_id": 140, "league_name": "La Liga"},
+            )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ingested"] is True
+
+
+# ---------------------------------------------------------------------------
+# GET /teams/{name}/detail — drill-down endpoint
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_team_detail_returns_200_with_squad():
+    sample_squad = [
+        {"name": "GK1", "position": "GK",  "age": 28, "jersey_number": 1,  "nationality": "France", "team_name": "France", "league_id": "10195"},
+        {"name": "DF1", "position": "DEF", "age": 25, "jersey_number": 4,  "nationality": "France", "team_name": "France", "league_id": "10195"},
+        {"name": "DF2", "position": "DEF", "age": 27, "jersey_number": 5,  "nationality": "France", "team_name": "France", "league_id": "10195"},
+        {"name": "MD1", "position": "MID", "age": 24, "jersey_number": 8,  "nationality": "France", "team_name": "France", "league_id": "10195"},
+        {"name": "FW1", "position": "FWD", "age": 23, "jersey_number": 10, "nationality": "France", "team_name": "France", "league_id": "10195"},
+    ]
+    sample_summary = [{
+        "team_name": "France", "matches_played": 10, "wins": 8, "draws": 1, "losses": 1,
+        "goals_for": 22, "goals_against": 6, "goal_difference": 16, "points": 25, "league_id": "10195",
+    }]
+    with patch("src.api.main.bq") as mock_bq:
+        # Two run_query calls — first is the squad query, second is the summary
+        mock_bq.run_query.side_effect = [sample_squad, sample_summary]
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/teams/France/detail")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["team_name"] == "France"
+    assert len(data["squad"]) == 5
+    assert data["total_players"] == 5
+    # 2 DEF + 1 MID + 1 FWD → 1-2-1-1 formation
+    assert data["formation"] == "1-2-1-1"
+    # Position counts present
+    assert data["position_counts"]["DEF"] == 2
+
+
+@pytest.mark.asyncio
+async def test_team_detail_empty_squad_returns_dash_formation():
+    """A team with no players should return a '—' formation, not an error."""
+    with patch("src.api.main.bq") as mock_bq:
+        mock_bq.run_query.side_effect = [[], []]
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/teams/Atlantis/detail")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["formation"] == "—"
+    assert data["total_players"] == 0
+    assert data["squad"] == []
+
+
+@pytest.mark.asyncio
+async def test_team_detail_squad_query_failure_returns_empty_list():
+    """BQ error must not bubble — return an empty squad so the modal still opens."""
+    with patch("src.api.main.bq") as mock_bq:
+        mock_bq.run_query.side_effect = Exception("boom")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/teams/France/detail")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["squad"] == []
+
+
+# ---------------------------------------------------------------------------
+# GET /leaderboard — limit cap raised + all_leagues passthrough
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_accepts_limit_up_to_50():
+    """Limit cap was raised from 20 to 50 so users can show top 20+ players."""
+    with patch("src.api.main.bq") as mock_bq:
+        mock_bq.run_query.return_value = []
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/leaderboard?stat=goals&limit=30")
+    assert response.status_code == 200
+    sql = mock_bq.run_query.call_args[0][0]
+    assert "LIMIT 30" in sql
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_all_leagues_param_passes_through():
+    """all_leagues=true should be echoed in the response — used by the
+    'All Leagues' toggle in the UI."""
+    with patch("src.api.main.bq") as mock_bq:
+        mock_bq.run_query.return_value = []
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/leaderboard?stat=goals&all_leagues=true")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["all_leagues"] is True
+
+
+# ---------------------------------------------------------------------------
+# Report player name extraction (Fix 2)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_player_name_handles_lowercase_messi():
+    """Regression: 'generate messi's report' was returning '' before fix."""
+    from src.api.main import _extract_player_name_from_report_q
+    assert _extract_player_name_from_report_q("generate messi's report") == "messi"
+
+
+def test_extract_player_name_handles_no_possessive():
+    """'messi report' with no possessive should still extract the name."""
+    from src.api.main import _extract_player_name_from_report_q
+    assert _extract_player_name_from_report_q("messi report") == "messi"
+    assert _extract_player_name_from_report_q("download mbappe scouting report") == "mbappe"
+
+
+def test_extract_player_name_handles_for_about():
+    from src.api.main import _extract_player_name_from_report_q
+    assert _extract_player_name_from_report_q("generate report for messi") == "messi"
+    assert _extract_player_name_from_report_q(
+        "create a scouting report about Bellingham"
+    ) == "Bellingham"
