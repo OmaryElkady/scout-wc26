@@ -2016,7 +2016,13 @@
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-        const result = await pollProgress();
+        // Fast path: backend skipped the ingest because the target league
+        // already has data. Skip polling entirely so the UI is instant.
+        let body = {};
+        try { body = await res.clone().json(); } catch (_) { /* ignore */ }
+        const result = body.ingested === false
+          ? { success: true, fast: true }
+          : await pollProgress();
 
         setTimeout(() => {
           const panel = document.getElementById('progress-panel');
@@ -2334,6 +2340,19 @@
     const d = document.createElement('div');
     d.textContent = String(str ?? '');
     return d.innerHTML;
+  }
+
+  // Attribute-safe escape — textContent/innerHTML alone does NOT escape ", '
+  // so embedding the result inside onclick="..." breaks when the value
+  // contains a quote (e.g. JSON.stringify("England") emits "England" which
+  // terminates the surrounding double-quoted attribute and disables the click).
+  function _attrEsc(str) {
+    return String(str ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   async function _typewriter(inputEl, text, msPerChar = 45) {
@@ -2682,7 +2701,8 @@
       const cls  = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : '';
       const lbl  = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `#${rank}`;
       const safeName = _escHtml(t.team_name || '');
-      return `<div class="feature-card clickable ${cls}" onclick="openTeamModal(${JSON.stringify(t.team_name || '')})" title="View squad for ${safeName}">
+      const attrName = _attrEsc(t.team_name || '');
+      return `<div class="feature-card clickable ${cls}" data-team="${attrName}" onclick="openTeamModal(this.dataset.team)" title="View squad for ${safeName}">
         <div class="fc-name" title="${safeName}">${lbl} ${safeName || '—'}</div>
         <div class="fc-pts">${t.points ?? '—'}</div>
         <div class="fc-pts-label">Points</div>
@@ -2712,7 +2732,8 @@
     tbody.innerHTML = page.map((t, i) => {
       const gd = t.goal_diff ?? 0;
       const safeName = _escHtml(t.team_name || '');
-      return `<tr style="cursor:pointer" onclick="openTeamModal(${JSON.stringify(t.team_name || '')})" title="View squad for ${safeName}">
+      const attrName = _attrEsc(t.team_name || '');
+      return `<tr style="cursor:pointer" data-team="${attrName}" onclick="openTeamModal(this.dataset.team)" title="View squad for ${safeName}">
         <td class="td-rank">${start + i + 1}</td>
         <td class="td-team">${safeName || '—'}</td>
         <td class="td-w">${t.wins ?? '—'}</td>
@@ -3351,7 +3372,8 @@
 
   async function pollProgress(maxAttempts = 150) {
     for (let i = 0; i < maxAttempts; i++) {
-      await new Promise(r => setTimeout(r, 2000));
+      // First poll after 300ms (catches fast paths instantly), then 2s intervals.
+      await new Promise(r => setTimeout(r, i === 0 ? 300 : 2000));
       try {
         const resp = await fetch(`${API}/progress/current`);
         if (!resp.ok) continue;
@@ -3486,7 +3508,7 @@
       const players = byPos[key] || [];
       const body = players.length
         ? players.map(p => `
-            <div class="tm-player" onclick="event.stopPropagation(); _openReportFromModal(${JSON.stringify(p.name || '')})">
+            <div class="tm-player" data-player="${_attrEsc(p.name || '')}" onclick="event.stopPropagation(); _openReportFromModal(this.dataset.player)">
               <span class="tm-player-jersey">${p.jersey_number != null ? '#' + p.jersey_number : '—'}</span>
               <div class="tm-player-info">
                 <div class="tm-player-name">${_escHtml(p.name || '—')}</div>
