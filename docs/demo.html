@@ -2101,6 +2101,73 @@
     return palette[(name || "").charCodeAt(0) % palette.length];
   }
 
+  // Render an actionable "player exists but their league isn't loaded" card.
+  // Wires the "Switch & retry" button to LeagueManager.switchTo() so the user
+  // can resolve it in one click without re-typing the player name.
+  function _renderNotLoadedCard(playerName, payload) {
+    const card = document.getElementById("report-card");
+    const meta = document.getElementById("report-meta");
+    const summary = document.getElementById("report-summary");
+    const strengths = document.getElementById("report-strengths");
+    const actions = document.getElementById("report-actions");
+    const perfEl = document.getElementById("report-perf");
+    const avatar = document.getElementById("report-avatar");
+    if (avatar) {
+      avatar.textContent = "?";
+      avatar.className = "player-avatar";
+      avatar.style.background = "#94a3b8";
+    }
+    if (perfEl) perfEl.style.display = "none";
+    document.getElementById("report-name").textContent = playerName;
+    const club = payload.club || "their club";
+    const league = payload.suggested_league || "another league";
+    if (meta) {
+      meta.innerHTML =
+        `<span class="meta-chip">🏟️ ${_escHtml(club)}</span>` +
+        `<span class="meta-chip">🏆 ${_escHtml(league)}</span>` +
+        `<span class="rec-chip" style="background:rgba(245,158,11,.15);color:#f59e0b;border:1px solid rgba(245,158,11,.3)">League not loaded</span>`;
+    }
+    if (summary) summary.textContent = payload.message || "";
+    if (strengths) strengths.innerHTML = "";
+
+    // Match the league name to one of our known league IDs to wire a one-click switch.
+    let switchId = null;
+    const sel = document.getElementById("league-select");
+    if (sel) {
+      for (const opt of sel.options) {
+        const txt = opt.textContent.replace(/ \(Coming.*\)$/, '').trim();
+        if (txt.toLowerCase() === league.toLowerCase()) {
+          switchId = parseInt(opt.value, 10);
+          break;
+        }
+      }
+    }
+    if (actions) {
+      if (switchId !== null && !Number.isNaN(switchId)) {
+        actions.innerHTML = `<button class="btn-download" type="button">⚡ Switch to ${_escHtml(league)} & retry</button>`;
+        const btn = actions.querySelector('button');
+        if (btn) {
+          btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            btn.textContent = `Switching to ${league}…`;
+            try {
+              await LeagueManager.switchTo(switchId);
+              // Retry the report once the switch completes
+              const inp = document.getElementById("player-input");
+              if (inp) inp.value = playerName;
+              await fetchReport();
+            } finally {
+              btn.disabled = false;
+            }
+          });
+        }
+      } else {
+        actions.innerHTML = `<div style="color:var(--muted);font-size:13px">No matching league in the dropdown — this league isn't available on the free API tier.</div>`;
+      }
+    }
+    card.className = "report-card visible";
+  }
+
   // Populates the report card and returns true on success, false on failure.
   async function fetchReport() {
     const name = document.getElementById("player-input").value.trim();
@@ -2122,6 +2189,14 @@
 
       const r = await res.json();
       const displayName = r.player_name || name;
+
+      // Backend says player exists in the wider football world but isn't in
+      // the currently-loaded league. Render an actionable card with a "Switch
+      // to <league>" button instead of an empty/fake scouting report.
+      if (r.status === "not_loaded") {
+        _renderNotLoadedCard(displayName, r);
+        return false;
+      }
 
       // Initials avatar — position-coloured if we know the position
       const avatarEl = document.getElementById("report-avatar");
@@ -2708,35 +2783,92 @@
     if (e.key === "Enter") downloadPdf();
   });
 
+  async function _runPdfFetch(name) {
+    const statusEl = document.getElementById("pdf-status");
+    const res = await fetch(`${API}/report/pdf/${encodeURIComponent(name)}`, {
+      method: "POST",
+    });
+    if (res.status === 422) {
+      // not_loaded path — render an inline switch-league prompt and stop.
+      let payload = {};
+      try { payload = (await res.json()).detail || {}; } catch (_) {}
+      _renderPdfNotLoaded(name, payload);
+      return;
+    }
+    if (res.status === 404) throw new Error(`Player "${name}" not found in database`);
+    if (!res.ok) throw new Error(`Server error ${res.status}`);
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name.replace(/\s+/g, "_")}_scouting_report.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    if (statusEl) {
+      statusEl.textContent = `✓ PDF generated for ${name} — check your downloads`;
+      statusEl.className = "answer-box visible pdf-success";
+    }
+  }
+
+  function _renderPdfNotLoaded(playerName, payload) {
+    const statusEl = document.getElementById("pdf-status");
+    if (!statusEl) return;
+    const club = payload.club || "their club";
+    const league = payload.suggested_league || "another league";
+    const msg = payload.message || `${playerName} plays in ${league}, which isn't loaded yet.`;
+    let switchId = null;
+    const sel = document.getElementById("league-select");
+    if (sel) {
+      for (const opt of sel.options) {
+        const txt = opt.textContent.replace(/ \(Coming.*\)$/, '').trim();
+        if (txt.toLowerCase() === league.toLowerCase()) {
+          switchId = parseInt(opt.value, 10);
+          break;
+        }
+      }
+    }
+    const safeName = _escHtml(playerName);
+    const safeLeague = _escHtml(league);
+    const safeMsg = _escHtml(msg);
+    let actionHtml;
+    if (switchId !== null && !Number.isNaN(switchId)) {
+      actionHtml = `<button id="pdf-switch-btn" class="btn-download" type="button" style="margin-top:10px">⚡ Switch to ${safeLeague} & retry</button>`;
+    } else {
+      actionHtml = `<div style="color:var(--muted);font-size:13px;margin-top:8px">This league isn't available on the free API tier.</div>`;
+    }
+    statusEl.innerHTML =
+      `<div style="font-size:14px"><strong>${safeName}</strong> · ${_escHtml(club)} · ${safeLeague}</div>` +
+      `<div style="color:var(--muted);font-size:13px;margin-top:4px">${safeMsg}</div>` +
+      actionHtml;
+    statusEl.className = "answer-box visible";
+    const btn = document.getElementById("pdf-switch-btn");
+    if (btn && switchId !== null) {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.textContent = `Switching to ${league}…`;
+        try {
+          await LeagueManager.switchTo(switchId);
+          await _runPdfFetch(playerName);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    }
+  }
+
   async function downloadPdf() {
     const name = document.getElementById("pdf-input").value.trim();
     if (!name) return;
-
     const statusEl = document.getElementById("pdf-status");
     statusEl.className = "answer-box";
     statusEl.textContent = "";
     setLoading("pdf-spinner", "pdf-btn", true);
-
     try {
-      const res = await fetch(`${API}/report/pdf/${encodeURIComponent(name)}`, {
-        method: "POST",
-      });
-
-      if (res.status === 404) throw new Error(`Player "${name}" not found in database`);
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${name.replace(/\s+/g, "_")}_scouting_report.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      statusEl.textContent = `✓ PDF generated for ${name} — check your downloads`;
-      statusEl.className = "answer-box visible pdf-success";
+      await _runPdfFetch(name);
     } catch (err) {
       showError("pdf-status", err.message || "Failed to generate PDF");
     } finally {
@@ -2755,22 +2887,7 @@
     if (statusEl) { statusEl.className = 'answer-box'; statusEl.textContent = ''; }
     setLoading('pdf-spinner', 'pdf-btn', true);
     try {
-      const res = await fetch(`${API}/report/pdf/${encodeURIComponent(name)}`, { method: 'POST' });
-      if (res.status === 404) throw new Error(`Player "${name}" not found in database`);
-      if (!res.ok) throw new Error(`Server error ${res.status}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${name.replace(/\s+/g, '_')}_scouting_report.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      if (statusEl) {
-        statusEl.textContent = `✓ PDF generated for ${name} — check your downloads`;
-        statusEl.className = 'answer-box visible pdf-success';
-      }
+      await _runPdfFetch(name);
     } catch (err) {
       showError('pdf-status', err.message || 'Failed to generate PDF');
     } finally {
