@@ -1,9 +1,11 @@
 import json
 import logging
+import re
 import sys
 from typing import Any
 
 import google.genai as genai
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from src.agent import tools as agent_tools
@@ -156,6 +158,101 @@ def _default_plan(user_question: str) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Layer 1a — Fast-path planner (regex)
+#
+# Skips the LLM planner call entirely for clearly-shaped queries (position
+# lookups, leaderboards, switch, refresh). Halves Gemini quota use on the most
+# common queries and was the trigger for the 429 fix.
+# Bails out to the LLM planner for anything ambiguous, long, or that looks
+# like a prompt injection — so the safety check still runs when it matters.
+# ---------------------------------------------------------------------------
+
+_PROMPT_INJECTION_RE = re.compile(
+    r"(?i)\b(ignore\s+(?:previous|all|prior|the)|you\s+are\s+now|"
+    r"system\s+prompt|new\s+instructions?|forget\s+(?:everything|all)|"
+    r"act\s+as|pretend\s+to\s+be|disregard|role\s*:)\b"
+)
+
+_POSITION_WORD_TO_CODE: dict[str, str] = {
+    "midfielder": "MID", "midfielders": "MID", "midfield": "MID",
+    "mid": "MID", "mids": "MID",
+    "defender": "DEF", "defenders": "DEF", "defence": "DEF", "defense": "DEF",
+    "def": "DEF", "defs": "DEF",
+    "forward": "FWD", "forwards": "FWD", "striker": "FWD", "strikers": "FWD",
+    "attacker": "FWD", "attackers": "FWD", "fwd": "FWD", "fwds": "FWD",
+    "goalkeeper": "GK", "goalkeepers": "GK", "keeper": "GK", "keepers": "GK",
+    "gk": "GK", "gks": "GK",
+}
+
+_POSITION_FAST_RE = re.compile(
+    r"(?i)\b(?:best|top|young(?:est)?|finest|elite|greatest)\b[^?\n]{0,60}?"
+    r"\b(" + "|".join(sorted(_POSITION_WORD_TO_CODE, key=len, reverse=True)) + r")\b"
+)
+
+_LEADERBOARD_FAST_RE = re.compile(
+    r"(?i)\b(?:top|best|most|leading|highest)\b[^?\n]{0,40}?"
+    r"\b(goalscorers?|scorers?|assisters?|assists?|goals?|rated|ratings?)\b"
+)
+
+_SWITCH_FAST_RE = re.compile(
+    r"(?i)\b(?:switch|change|move|set)\b[^?\n]{0,40}?\b(?:to|into|league)\b\s+(.+)"
+)
+
+_REFRESH_FAST_RE = re.compile(
+    r"(?i)\b(refresh|re[- ]?sync|sync)\b[^?\n]{0,30}\b(data|scout(?:ing)?)?\b"
+)
+
+
+def _fast_plan(user_question: str) -> dict | None:
+    """Build a plan from regex patterns for simple queries.
+
+    Returns None if the query is long, possibly malicious, or doesn't match
+    any of the simple shapes — the caller falls back to the LLM planner.
+    """
+    if not user_question:
+        return None
+    if len(user_question) > 300:
+        return None
+    if _PROMPT_INJECTION_RE.search(user_question):
+        return None
+
+    plan = _default_plan(user_question)
+
+    pos_match = _POSITION_FAST_RE.search(user_question)
+    if pos_match:
+        plan["intent"] = "position_lookup"
+        plan["entities"]["position"] = _POSITION_WORD_TO_CODE[pos_match.group(1).lower()]
+        return plan
+
+    lb_match = _LEADERBOARD_FAST_RE.search(user_question)
+    if lb_match:
+        word = lb_match.group(1).lower()
+        if word.startswith("assist"):
+            stat = "assists"
+        elif word.startswith("rat"):
+            stat = "rating"
+        else:
+            stat = "goals"
+        plan["intent"] = "leaderboard"
+        plan["entities"]["stat"] = stat
+        return plan
+
+    if _REFRESH_FAST_RE.search(user_question):
+        plan["intent"] = "refresh_data"
+        return plan
+
+    sw_match = _SWITCH_FAST_RE.search(user_question)
+    if sw_match:
+        league = sw_match.group(1).strip().rstrip("?.!").strip()
+        if league:
+            plan["intent"] = "switch_league"
+            plan["entities"]["league_name"] = league
+            return plan
+
+    return None
+
+
 def _plan_intent(user_question: str, *, client: genai.Client | None = None) -> dict:
     """Layer 1: classify intent + sanitize input. Never raises."""
     try:
@@ -260,7 +357,13 @@ def run_query(user_question: str) -> str:
     client = _get_client()
 
     # Layer 1 — plan & sanitize.
-    plan = _plan_intent(user_question, client=client)
+    # Try the regex fast path first; fall back to the LLM planner for anything
+    # ambiguous or potentially unsafe.
+    plan = _fast_plan(user_question)
+    if plan is None:
+        plan = _plan_intent(user_question, client=client)
+    else:
+        logger.info("Fast-path plan: intent=%s (skipped LLM planner)", plan.get("intent"))
     if not plan.get("is_safe", True):
         reason = plan.get("refusal_reason") or "off-topic or unsafe input"
         logger.info("Planner rejected query: %s", reason)
@@ -284,11 +387,32 @@ def run_query(user_question: str) -> str:
     ]
 
     for _ in range(_MAX_TOOL_ROUNDS):
-        response = client.models.generate_content(
-            model=_MODEL,
-            contents=contents,
-            config=generate_config,
-        )
+        try:
+            response = client.models.generate_content(
+                model=_MODEL,
+                contents=contents,
+                config=generate_config,
+            )
+        except genai_errors.ClientError as exc:
+            status = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+            if status == 429:
+                logger.warning("Vertex AI rate limit hit on /query: %s", exc)
+                return (
+                    "⚠️ The scouting agent is temporarily rate-limited by Vertex AI "
+                    "(quota exhausted). Wait a few seconds and try again — the data "
+                    "and tools are fine; this is just the LLM provider throttling."
+                )
+            logger.exception("Gemini client error in run_query")
+            return (
+                "⚠️ The scouting agent hit an upstream error talking to Vertex AI. "
+                "Please try again in a moment."
+            )
+        except genai_errors.APIError as exc:
+            logger.exception("Gemini API error in run_query: %s", exc)
+            return (
+                "⚠️ The scouting agent hit an upstream error talking to Vertex AI. "
+                "Please try again in a moment."
+            )
 
         candidate = response.candidates[0]
         function_call_parts = [
