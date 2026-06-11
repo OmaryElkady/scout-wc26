@@ -19,6 +19,10 @@ _SYSTEM_INSTRUCTION = (
     "Use the provided tools to query player and team data from the database. "
     "Base every answer on data returned by the tools. "
     "Be specific: include player names, ages, nationalities, positions, and team names.\n\n"
+    "AVAILABLE LEAGUES (only these have data — match these names exactly when "
+    "calling switch_league): UEFA WC Qualification, Premier League, Champions League, "
+    "La Liga, Bundesliga, Serie A, Ligue 1, MLS, Brasileirao, Scottish Premiership, "
+    "World Cup 2026 (no data until June 11, 2026).\n\n"
     "TOOL ROUTING (do NOT ask the user to clarify — pick the best tool and answer):\n"
     "- 'best/top/who are the best <position>' (midfielders, defenders, forwards, goalkeepers) "
     "  → call get_top_players_by_position(position, limit=10) and present the list as the youngest "
@@ -29,14 +33,32 @@ _SYSTEM_INSTRUCTION = (
     "- specific team → call query_team_summary(team_name=...) and/or get_team_roster(team_name=...).\n"
     "- 'switch / change to <league>' → call switch_league(league_name=...).\n"
     "- 'refresh / sync / update data' → call refresh_scouting_data().\n\n"
+    "MISSING-DATA HANDLING (critical):\n"
+    "When get_player_detail returns an empty dict, the player isn't in the currently "
+    "loaded data — they likely play in a league we haven't ingested yet. Use your own "
+    "football knowledge to identify which league the player currently plays in, then "
+    "respond with one short paragraph in this exact shape:\n"
+    "  \"<Player Name> currently plays for <Club> in the <League Name>. "
+    "  That league isn't loaded yet — switch to it from the league dropdown "
+    "  (or ask me to switch) and I'll generate the scouting report.\"\n"
+    "Examples of player→league knowledge you should have:\n"
+    "- Lionel Messi → Inter Miami → MLS\n"
+    "- Kylian Mbappé → Real Madrid → La Liga\n"
+    "- Vinícius Júnior → Real Madrid → La Liga\n"
+    "- Robert Lewandowski → Barcelona → La Liga\n"
+    "- Cristiano Ronaldo → Al-Nassr → Saudi Pro League (no data on free tier)\n"
+    "- Neymar Jr → Santos → Brasileirao\n"
+    "Do NOT call switch_league automatically for a player lookup — only suggest it.\n\n"
     "STYLE RULES:\n"
     "1. Never ask clarifying questions. Always pick a reasonable interpretation, call a tool, "
     "   and answer with concrete data.\n"
-    "2. Never refuse or hedge. Never say 'I lack the data' — call a tool first.\n"
+    "2. Never refuse or hedge. Never say 'I lack the data' — call a tool first, then if it "
+    "   still returns nothing, follow the MISSING-DATA HANDLING rule.\n"
     "3. If a tool returns rows, summarise them concisely (name, team, age, key stat) — "
     "   do not paste raw JSON.\n"
-    "4. If a tool returns zero rows, still answer with the best available adjacent data "
-    "   (e.g. all players for that position across leagues) — do not stop and ask."
+    "4. If a tool returns zero rows AND the query was generic (not a specific player), "
+    "   still answer with the best available adjacent data (e.g. all players for that "
+    "   position across leagues) — do not stop and ask."
 )
 
 _TOOL_FUNCTIONS = [
@@ -160,6 +182,39 @@ def generate_scouting_report(player_name: str) -> dict:
     player_data = agent_tools.get_player_detail(player_name=player_name)
     if not player_data:
         logger.warning("No data found for player: %s", player_name)
+        # Ask Gemini (no tools, fast) which league this player is in so the
+        # frontend can show "switch to MLS?" instead of a flat 404.
+        try:
+            client = _get_client()
+            suggest_prompt = (
+                f"Which professional football league does {player_name} currently play in? "
+                "Respond with JSON: "
+                '{"club": "Club Name", "league": "League Name", "known": true|false}. '
+                "If you don't know who this player is, set known=false. "
+                "League name MUST be one of: MLS, La Liga, Premier League, Champions League, "
+                "Bundesliga, Serie A, Ligue 1, Brasileirao, UEFA WC Qualification, "
+                "Saudi Pro League, Other. No prose."
+            )
+            sresp = client.models.generate_content(
+                model=_MODEL,
+                contents=suggest_prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
+            suggestion = json.loads(sresp.text or "{}")
+            if suggestion.get("known"):
+                return {
+                    "status": "not_loaded",
+                    "player_name": player_name,
+                    "club": suggestion.get("club", ""),
+                    "suggested_league": suggestion.get("league", ""),
+                    "message": (
+                        f"{player_name} plays for {suggestion.get('club','')} in "
+                        f"{suggestion.get('league','')}. That league isn't loaded yet — "
+                        "switch from the league dropdown and try again."
+                    ),
+                }
+        except Exception as exc:
+            logger.warning("Could not get league suggestion for %s: %s", player_name, exc)
         return {}
 
     prompt = (
