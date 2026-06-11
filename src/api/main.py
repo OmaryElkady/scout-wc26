@@ -22,6 +22,7 @@ from src.api.models import (
 )
 from src.utils.bq_client import bq
 from src.utils.config import config
+from src.utils.text_normalize import unaccent, unaccent_sql
 
 logger = logging.getLogger(__name__)
 
@@ -399,7 +400,7 @@ def chart_team_depth(team_name: str, league_id: Optional[int] = None) -> dict:
     table = config.table("gold_player_stats")
     base = (
         "SELECT position, COUNT(*) as cnt FROM `" + table + "` "
-        "WHERE LOWER(team_name) LIKE '%" + _esc(team_name.lower()) + "%'"
+        "WHERE " + unaccent_sql("team_name") + " LIKE '%" + _esc(unaccent(team_name)) + "%'"
     )
     rows = bq.run_query(base + " AND league_id = '" + _esc(lid) + "' GROUP BY position")
     if not rows and not explicit:
@@ -774,13 +775,53 @@ def report_pdf(player_name: str) -> Response:
         for _n in _names_to_try:
             _sql = (
                 "SELECT * FROM `" + config.table("gold_player_stats") + "` "
-                "WHERE LOWER(name) LIKE '%" + _esc(_n.lower()) + "%' LIMIT 1"
+                "WHERE " + unaccent_sql("name") + " LIKE '%" + _esc(unaccent(_n)) + "%' LIMIT 1"
             )
             _rows = bq.run_query(_sql)
             if _rows:
                 player = _rows[0]
                 break
     if not player:
+        # Last shot: ask Gemini which league this player is in and surface a
+        # structured 422 so the frontend can prompt the user to switch instead
+        # of throwing a bare "not found" toast.
+        try:
+            import google.genai as _g
+            from google.genai import types as _gt
+            _c = _g.Client(vertexai=True, project=config.PROJECT_ID, location=config.REGION)
+            _p = (
+                f"Which professional football league does {player_name} currently play in? "
+                'Reply JSON: {"club": "...", "league": "...", "known": true|false}. '
+                "League MUST be one of: MLS, La Liga, Premier League, Champions League, "
+                "Bundesliga, Serie A, Ligue 1, Brasileirao, UEFA WC Qualification, "
+                "Saudi Pro League, Other."
+            )
+            _r = _c.models.generate_content(
+                model=_MODEL,
+                contents=_p,
+                config=_gt.GenerateContentConfig(response_mime_type="application/json"),
+            )
+            import json as _json
+            _s = _json.loads(_r.text or "{}")
+            if _s.get("known"):
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "status": "not_loaded",
+                        "player_name": player_name,
+                        "club": _s.get("club", ""),
+                        "suggested_league": _s.get("league", ""),
+                        "message": (
+                            f"{player_name} plays for {_s.get('club','')} in "
+                            f"{_s.get('league','')}. Switch leagues from the dropdown "
+                            "to load that data, then re-generate the PDF."
+                        ),
+                    },
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass
         raise HTTPException(status_code=404, detail=f"Player '{player_name}' not found")
 
     team_name = player.get("team_name", "")
@@ -804,7 +845,7 @@ def report_pdf(player_name: str) -> Response:
         top_sql = (
             "SELECT stat_type, goals, assists, rating, rank "
             "FROM `" + config.table("gold_top_performers") + "` "
-            "WHERE LOWER(player_name) LIKE '%" + _esc(_pname.lower()) + "%' "
+            "WHERE " + unaccent_sql("player_name") + " LIKE '%" + _esc(unaccent(_pname)) + "%' "
             "ORDER BY rank ASC LIMIT 3"
         )
         top_rows = bq.run_query(top_sql)
@@ -1034,6 +1075,17 @@ def report(player_name: str) -> ReportResponse:
     result = scout_agent.generate_scouting_report(player_name)
     if not result:
         raise HTTPException(status_code=404, detail=f"Player '{player_name}' not found")
+
+    # Player isn't in the loaded data but Gemini knew which league they're in.
+    # Surface the suggestion to the frontend instead of pretending it's a real report.
+    if result.get("status") == "not_loaded":
+        return ReportResponse(
+            player_name=result.get("player_name", player_name),
+            status="not_loaded",
+            message=result.get("message", ""),
+            suggested_league=result.get("suggested_league", ""),
+            club=result.get("club", ""),
+        )
 
     jersey = wins = draws = losses = points = matches = None
     try:
