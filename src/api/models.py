@@ -19,9 +19,13 @@ class QueryResponse(BaseModel):
 
 class ReportResponse(BaseModel):
     player_name: str
-    position: str
-    team: str
-    nationality: str
+    # All "data" fields are optional — when the player is in a non-loaded league
+    # the endpoint returns status="not_loaded" with just player_name + message +
+    # suggested_league and the frontend renders a "switch league?" prompt
+    # instead of trying to fill in the card.
+    position: str = ""
+    team: str = ""
+    nationality: str = ""
     age: int | None = None
     jersey: int | None = None
     wins: int | None = None
@@ -29,9 +33,13 @@ class ReportResponse(BaseModel):
     losses: int | None = None
     points: int | None = None
     matches: int | None = None
-    summary: str
-    strengths: list[str]
-    recommendation: str
+    summary: str = ""
+    strengths: list[str] = []
+    recommendation: str = ""
+    status: str | None = None
+    message: str | None = None
+    suggested_league: str | None = None
+    club: str | None = None
 
 
 class TeamListResponse(BaseModel):
