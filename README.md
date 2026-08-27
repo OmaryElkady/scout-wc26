@@ -1,5 +1,7 @@
 # Scout WC26
 
+## ***Hackathon submission, June 2026. Live demo offline - free-tier API credits have expired.***
+
 **AI-powered World Cup 2026 scouting agent — Gemini 2.5 Flash + Fivetran Connector SDK + BigQuery + Google ADK**
 
 ![Python](https://img.shields.io/badge/python-3.14-blue?logo=python&logoColor=white)
